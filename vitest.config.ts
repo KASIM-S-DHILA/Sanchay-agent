@@ -18,6 +18,7 @@ export default defineConfig({
             "evals/search-fallback.eval.test.ts",
             "evals/planner.eval.test.ts",
             "evals/executor.eval.test.ts",
+            "evals/narrator.eval.test.ts",
           ],
         },
       },

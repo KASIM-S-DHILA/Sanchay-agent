@@ -12,22 +12,33 @@ export class GroqProvider implements AIProvider {
     // gpt-oss models spend tokens on hidden reasoning before content — ensure headroom
     const isReasoningModel = groqModel.includes("gpt-oss");
     const maxTokens = isReasoningModel ? Math.max(opts?.max_tokens ?? 1024, 768) : opts?.max_tokens ?? 512;
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: groqModel,
-        messages,
-        temperature: opts?.temperature ?? 0,
-        max_tokens: maxTokens,
-      }),
-    });
-    if (!res.ok) throw new Error(`Groq chat error: ${res.status} ${await res.text()}`);
-    const data: any = await res.json();
-    return data.choices?.[0]?.message?.content ?? "";
+
+    // ponytail: free-tier TPM throttles bursty suites (429) — 3 attempts w/ linear backoff
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: groqModel,
+          messages,
+          temperature: opts?.temperature ?? 0,
+          max_tokens: maxTokens,
+        }),
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        return data.choices?.[0]?.message?.content ?? "";
+      }
+      lastError = new Error(`Groq chat error: ${res.status} ${await res.text()}`);
+      // Only retry transient failures — bad key / bad model won't heal
+      if (res.status !== 429 && res.status < 500) break;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+    throw lastError ?? new Error("Groq chat failed");
   }
 
   async embed(_model: string, _texts: string[]): Promise<number[][]> {

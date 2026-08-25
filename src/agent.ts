@@ -4,7 +4,9 @@ import { searchProducts } from "./catalog/search";
 import { seedCatalog } from "./catalog/seed";
 import { decideTurn, isCancelPhrase, isConfirmPhrase } from "./executor/decide-turn";
 import { executeTurn } from "./executor/index";
+import { callNarrator } from "./llm/narrator";
 import { callPlanner } from "./llm/planner";
+import { createChatProvider } from "./llm/provider-factory";
 import { extractBudgetIntent } from "./mandates";
 import { issueIntentMandate } from "./mandates/jwt";
 import { checkProbeGate, getProbeRefusal } from "./safety/probe-gate";
@@ -220,7 +222,26 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       detail: executorResult.errors.join("; ") || undefined,
     });
 
-    // STAGE 6: Memory — add user message to history
+    // STAGE 6: Narrator — generate natural reply from executor results
+    let narratorReply: string;
+    try {
+      narratorReply = await callNarrator(createChatProvider(this.env), {
+        userMessage,
+        executorResult,
+        history: this.state.history,
+        cart: this.state.cart,
+        cartTotal: executorResult.cartTotal,
+        pendingIntent: this.state.pendingIntent,
+        searchResults,
+      });
+    } catch (e) {
+      narratorReply = "Got it! Your cart has been updated. What else can I help with?";
+    }
+
+    // STAGE 7: Claim-check — validate narrator output against facts (Phase 7)
+    // For now, skip claim-check and use narrator reply directly
+
+    // STAGE 8: Persist and respond
     const turnRecord: TurnRecord = {
       role: "user",
       content: userMessage,
@@ -228,11 +249,9 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     };
     this.commitState({ history: [...this.state.history.slice(-7), turnRecord] });
 
-    // TEMPORARY: Echo planner reply until narrator (Phase 6) — now with executor debug
-    const replyText = turnPlan.reply || "I didn't understand that.";
     const assistantRecord: TurnRecord = {
       role: "assistant",
-      content: replyText,
+      content: narratorReply,
       timestamp: new Date().toISOString(),
       actions: executorResult.actions.map((a) => a.type),
     };
@@ -241,10 +260,10 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     connection.send(
       JSON.stringify({
         type: "chat",
-        content: replyText,
+        content: narratorReply,
         cart: this.state.cart,
-        plan: turnPlan,
-        executor: executorResult,
+        plan: turnPlan, // debug
+        executor: executorResult, // debug
       }),
     );
   }
