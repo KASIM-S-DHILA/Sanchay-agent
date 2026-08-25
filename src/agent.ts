@@ -60,19 +60,43 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     sessionMeta: null,
   };
 
-  async onConnect(connection: WebSocket) {
-    connection.send(
-      JSON.stringify({
-        type: "connected",
-        sessionId: this.name,
-        cart: this.state.cart,
-      }),
-    );
+  async onConnect() {
+    // Welcome is deferred until the init handshake delivers the buyer email
+  }
+
+  /**
+   * Per-session audit trail read over same-runtime DO RPC.
+   * Used by the /audit endpoint in src/index.ts — @callable is only
+   * required for cross-runtime (browser) callers.
+   */
+  async getAuditEvents(): Promise<{ events: Record<string, unknown>[] }> {
+    // Self-heal — direct RPC can race onStart on a cold DO instance
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        session_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        sku TEXT,
+        order_id TEXT,
+        payment_id TEXT,
+        amount_paise INTEGER,
+        bound_paise INTEGER,
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        detail TEXT
+      );
+    `);
+    const results = this.ctx.storage.sql
+      .exec("SELECT * FROM audit_events WHERE session_id = ? ORDER BY ts ASC", this.name)
+      .toArray();
+    return { events: results as unknown as Record<string, unknown>[] };
   }
 
   async onMessage(connection: WebSocket, message: string | ArrayBuffer) {
     // Parse the incoming message
-    let parsed: { type: string; content?: string };
+    let parsed: { type: string; content?: string; email?: string };
     try {
       parsed = JSON.parse(
         typeof message === "string" ? message : new TextDecoder().decode(message),
@@ -83,6 +107,24 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     }
 
     if (parsed.type !== "chat" || !parsed.content) {
+      // init handshake — capture buyer email for payment links
+      if (parsed.type === "init" && parsed.email) {
+        this.commitState({
+          sessionMeta: {
+            userId: parsed.email,
+            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+          },
+        });
+        this.audit({ action: "session.init", actor: "user", status: "ok", reason: `email ${parsed.email}` });
+        connection.send(
+          JSON.stringify({
+            type: "connected",
+            sessionId: this.name,
+            cart: this.state.cart,
+          }),
+        );
+        return;
+      }
       connection.send(
         JSON.stringify({
           type: "error",
@@ -98,6 +140,12 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     const probeResult = checkProbeGate(userMessage);
     if (probeResult.blocked) {
       const reply = getProbeRefusal(probeResult.reason!);
+      this.audit({
+        action: "probe_gate.blocked",
+        actor: "system",
+        status: "blocked",
+        reason: probeResult.reason ?? "unknown",
+      });
       this.commitState({
         history: [...this.state.history, { role: "assistant", content: reply, timestamp: new Date().toISOString() }],
       });
@@ -204,7 +252,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       if (isCancel) {
         // Disarm confirm — no LLM needed
         this.commitState({ confirmArmed: false });
-        this.audit({ action: "confirm.cancelled", actor: "user", status: "ok", reason: "User cancelled checkout" });
+        this.audit({ action: "confirm.disarmed", actor: "user", status: "ok", reason: "User cancelled checkout" });
         const cancelReply = "No problem! Your cart is saved. What would you like to do next?";
         const turnRecord: TurnRecord = {
           role: "user",
@@ -273,9 +321,38 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       action: "executor.executed",
       actor: "system",
       status: executorResult.errors.length > 0 ? "partial" : "ok",
-      reason: `mode=${mode} actions=${executorResult.actions.map((a) => `${a.type}:${a.success}`).join(",")}`,
+      reason: `mode=${mode.mode} actions=${executorResult.actions.map((a) => `${a.type}:${a.success}`).join(",")}`,
       detail: executorResult.errors.join("; ") || undefined,
     });
+
+    // Audit each successful cart mutation (money-relevant)
+    for (const a of executorResult.actions) {
+      if ((a.type === "add" || a.type === "remove") && a.success) {
+        this.audit({
+          action: "cart.mutated",
+          actor: "agent",
+          sku: a.productId,
+          amount_paise: a.price,
+          bound_paise: this.state.pendingIntent?.budgetValue,
+          status: "ok",
+          reason: `${a.type} ${a.productName ?? a.productId}${a.quantity ? ` x${a.quantity}` : ""}`,
+        });
+      } else if (a.type === "cart_cleared" && a.success) {
+        this.audit({
+          action: "cart.mutated",
+          actor: "agent",
+          status: "ok",
+          reason: "cart cleared",
+        });
+      } else if (a.type === "confirm_armed") {
+        this.audit({
+          action: "confirm.armed",
+          actor: "system",
+          status: "ok",
+          reason: "checkout confirmation required",
+        });
+      }
+    }
 
     // STAGE 6: Narrator — generate natural reply from executor results
     let narratorReply: string;
@@ -411,3 +488,4 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     );
   }
 }
+

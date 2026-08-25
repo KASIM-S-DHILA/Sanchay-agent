@@ -21,6 +21,7 @@ export default defineConfig({
             "evals/narrator.eval.test.ts",
             "evals/claim-check-integration.eval.test.ts",
             "evals/razorpay.eval.test.ts",
+            "evals/audit.eval.test.ts",
           ],
         },
       },
@@ -29,7 +30,17 @@ export default defineConfig({
         test: {
           name: "node",
           pool: "forks",
-          include: ["evals/state.eval.test.ts", "evals/probe-gate.eval.test.ts", "evals/claim-check.eval.test.ts"],
+          // full turn flows (planner+narrator+razorpay) exceed the 5s default
+          testTimeout: 60_000,
+          hookTimeout: 90_000,
+          // two concurrent unstable_dev instances race for ports/auth
+          fileParallelism: false,
+          include: [
+            "evals/state.eval.test.ts",
+            "evals/probe-gate.eval.test.ts",
+            "evals/claim-check.eval.test.ts",
+            "evals/audit-flow.eval.test.ts",
+          ],
         },
       },
     ],

@@ -78,13 +78,21 @@ export default {
           .bind(orderId)
           .run();
 
+        // Attribute the audit row to the order's session
+        const orderRow: any = await env.DB.prepare(
+          "SELECT session_id FROM orders WHERE razorpay_order_id = ?",
+        )
+          .bind(orderId)
+          .first();
+        const orderSession = orderRow?.session_id ?? "";
+
         // Webhooks bypass the DO — write audit directly to D1 audit_logs
         await env.DB.prepare(
           "INSERT INTO audit_logs (id, session_id, action, intent, params_json, result_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
           .bind(
             crypto.randomUUID(),
-            "",
+            orderSession,
             "payment.captured",
             "payment",
             JSON.stringify({ paymentId, orderId }),
@@ -101,11 +109,62 @@ export default {
     }
 
     if (url.pathname === "/audit") {
-      // Return audit trail for a session — will be wired in Phase 9
-      return Response.json({
-        status: "not_implemented",
-        message: "Audit endpoint coming in Phase 9",
-      });
+      const sessionId = url.searchParams.get("sid");
+      if (!sessionId) {
+        return Response.json({ error: "Missing sid parameter" }, { status: 400 });
+      }
+
+      // 1. Cross-session events from D1 (webhooks, etc.)
+      const d1Logs = await env.DB.prepare(
+        "SELECT id, session_id, action, intent, params_json, result_json, status, created_at FROM audit_logs WHERE session_id = ? ORDER BY created_at ASC",
+      )
+        .bind(sessionId)
+        .all();
+
+      // 2. Per-session turn-engine events from the DO's SQLite.
+      // Same-runtime DO RPC — getAuditEvents is a plain public method.
+      let doEvents: Record<string, unknown>[] = [];
+      try {
+        const doId = env.SanchayAgent.idFromName(sessionId);
+        // Same-runtime DO RPC — typed via structural cast (Env's namespace is untyped)
+        const stub = env.SanchayAgent.get(doId) as unknown as {
+          getAuditEvents(): Promise<{ events: Record<string, unknown>[] }>;
+        };
+        const res = await stub.getAuditEvents();
+        doEvents = res.events ?? [];
+      } catch (e) {
+        console.warn(`audit: DO fetch failed for ${sessionId}:`, e);
+      }
+
+      // 3. Merge and sort chronologically
+      const merged = [
+        ...(d1Logs.results as any[]).map((row) => ({
+          source: "d1",
+          id: String(row.id),
+          ts: new Date(row.created_at).getTime(),
+          action: row.action,
+          status: row.status,
+          reason: row.intent || "",
+          detail: row.params_json || row.result_json || "",
+        })),
+        ...doEvents.map((e: any) => ({
+          source: "do",
+          id: String(e.id),
+          ts: e.ts,
+          action: e.action,
+          status: e.status,
+          reason: e.reason,
+          detail: e.detail || "",
+          actor: e.actor,
+          sku: e.sku,
+          order_id: e.order_id,
+          payment_id: e.payment_id,
+          amount_paise: e.amount_paise,
+          bound_paise: e.bound_paise,
+        })),
+      ].sort((a, b) => a.ts - b.ts);
+
+      return Response.json({ events: merged, sessionId });
     }
 
     // Serve the React frontend via assets binding

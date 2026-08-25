@@ -8,6 +8,7 @@ export default function App() {
     () => `session-${crypto.randomUUID().slice(0, 8)}`,
   );
   const [showAudit, setShowAudit] = useState(true);
+  const [email, setEmail] = useState("");
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [messages, setMessages] = useState<{ role: string; content: string; paymentUrl?: string }[]>([]);
@@ -16,7 +17,11 @@ export default function App() {
   const agent = useAgent<AgentState>({
     agent: "sanchay-agent",
     name: sessionId,
-    onOpen: () => setConnected(true),
+    onOpen: () => {
+      setConnected(true);
+      // init handshake — capture buyer email for payment links
+      agent.send(JSON.stringify({ type: "init", email: email.trim() || "guest@example.com" }));
+    },
     onClose: () => setConnected(false),
     onStateUpdate: (state) => {
       // State updates from the agent (cart, etc.) — we'll use these in later phases
@@ -67,6 +72,12 @@ export default function App() {
           <input
             value={sessionId}
             onChange={(e) => setSessionId(e.target.value)}
+            className="buyer-input"
+          />
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Email (for receipts)"
             className="buyer-input"
           />
           <button onClick={() => setShowAudit((s) => !s)} className="toggle-btn">
@@ -121,7 +132,7 @@ export default function App() {
 
         {showAudit && (
           <aside className="audit-panel">
-            <AuditTrail />
+            <AuditTrail sessionId={sessionId} />
           </aside>
         )}
       </div>

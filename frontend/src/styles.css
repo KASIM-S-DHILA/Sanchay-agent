@@ -167,3 +167,15 @@ button:disabled {
   font-weight: 600;
   text-decoration: underline;
 }
+
+.badge {
+  border-radius: 4px;
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+}
+.badge-do { background: #1d3a6b; color: #9ec1ff; }
+.badge-d1 { background: #3a2d1d; color: #ffd39e; }
+.audit-reason { color: var(--muted); font-size: 0.75rem; }

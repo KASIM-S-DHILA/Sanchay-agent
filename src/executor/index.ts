@@ -229,9 +229,9 @@ export async function executeTurn(params: ExecutorParams): Promise<ExecutorResul
           )
           .run();
 
-        // Email: session meta userId when present, else Razorpay-link placeholder
-        const email = agentState.sessionMeta?.userId || "customer@example.com";
-        const paymentUrl = await createPaymentLink(env, order.id, email);
+        // Email: captured at init handshake when present
+        const customerEmail = agentState.sessionMeta?.userId || "guest@example.com";
+        const paymentUrl = await createPaymentLink(env, order.id, customerEmail);
 
         return {
           actions: [{ type: "checkout_initiated", success: true, orderId: order.id, paymentUrl }],

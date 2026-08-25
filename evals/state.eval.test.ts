@@ -35,23 +35,28 @@ describe("Sanchay Agent State", () => {
 
   // ponytail: undici rejects hand-rolled Upgrade requests, so drive a real
   // WebSocket handshake via Node's native client instead
-  it("WebSocket connection to agent succeeds", async () => {
+  it("WebSocket connection + init handshake succeeds", async () => {
     // ponytail: Unstable_DevWorker exposes `address`, not `host`
     const ws = new WebSocket(
       `ws://${worker.address}:${worker.port}/agents/sanchay-agent/test-session`,
     );
 
-    const firstMessage = new Promise<MessageEvent>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("WS connect timed out")), 15_000);
-      ws.addEventListener("open", () => clearTimeout(timer));
-      ws.addEventListener("message", (m) => resolve(m));
-      ws.addEventListener("error", (e) => {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("WS open timed out")), 15_000);
+      ws.addEventListener("open", () => {
         clearTimeout(timer);
-        reject(new Error(`WS error: ${e.message ?? "unknown"}`));
+        resolve();
+      });
+      ws.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("WS error"));
       });
     });
 
-    // ponytail: SDK sends a cf_agent_identity frame first — wait for ours
+    // init handshake — server replies "connected" once sessionMeta is captured
+    ws.send(JSON.stringify({ type: "init", email: "state-eval@example.com" }));
+
+    // ponytail: SDK sends cf_agent_* frames first — wait for ours
     const event = await (async () => {
       for (;;) {
         const e = await Promise.race([messageOnce(ws), connectTimeout()]);
