@@ -1,4 +1,8 @@
 import { Agent, callable } from "agents";
+import { buildFacts } from "./claim-check/facts";
+import { claimsConsistent } from "./claim-check/index";
+import { neverSilentGuard } from "./claim-check/never-silent";
+import { renderFallback } from "./claim-check/templates";
 import { embedProducts } from "./catalog/embed";
 import { searchProducts } from "./catalog/search";
 import { seedCatalog } from "./catalog/seed";
@@ -238,10 +242,38 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       narratorReply = "Got it! Your cart has been updated. What else can I help with?";
     }
 
-    // STAGE 7: Claim-check — validate narrator output against facts (Phase 7)
-    // For now, skip claim-check and use narrator reply directly
+    // STAGE 7: Claim-check — validate narrator output against facts
+    const facts = buildFacts(executorResult, searchResults);
+    const knownProductNames = [
+      ...new Set([...searchResults.map((r) => r.name), ...this.state.cart.map((c) => c.name)]),
+    ];
+    const check = claimsConsistent(narratorReply, facts, { knownProductNames });
 
-    // STAGE 8: Persist and respond
+    let finalReply: string;
+    if (check.consistent) {
+      finalReply = narratorReply;
+      this.audit({
+        action: "claim_check.passed",
+        actor: "system",
+        status: "ok",
+        reason: "narrator output consistent with facts",
+      });
+    } else {
+      console.warn(`Claim-check violations: ${check.violations.join("; ")}`);
+      finalReply = renderFallback(facts);
+      this.audit({
+        action: "claim_check.failed",
+        actor: "system",
+        status: "blocked",
+        reason: `narrator output discarded: ${check.violations.join("; ")}`,
+        detail: `Original: ${narratorReply.slice(0, 200)}`,
+      });
+    }
+
+    // STAGE 8: Never-silent guard
+    finalReply = neverSilentGuard(finalReply);
+
+    // STAGE 9: Persist and respond
     const turnRecord: TurnRecord = {
       role: "user",
       content: userMessage,
@@ -251,7 +283,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
 
     const assistantRecord: TurnRecord = {
       role: "assistant",
-      content: narratorReply,
+      content: finalReply,
       timestamp: new Date().toISOString(),
       actions: executorResult.actions.map((a) => a.type),
     };
@@ -260,7 +292,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     connection.send(
       JSON.stringify({
         type: "chat",
-        content: narratorReply,
+        content: finalReply,
         cart: this.state.cart,
         plan: turnPlan, // debug
         executor: executorResult, // debug

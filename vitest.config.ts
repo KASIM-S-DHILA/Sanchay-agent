@@ -19,15 +19,16 @@ export default defineConfig({
             "evals/planner.eval.test.ts",
             "evals/executor.eval.test.ts",
             "evals/narrator.eval.test.ts",
+            "evals/claim-check-integration.eval.test.ts",
           ],
         },
       },
       {
-        // ponytail: unstable_dev can't run inside workerd — state evals get a plain node pool
+        // ponytail: pure claim-check functions — no bindings needed
         test: {
           name: "node",
           pool: "forks",
-          include: ["evals/state.eval.test.ts", "evals/probe-gate.eval.test.ts"],
+          include: ["evals/state.eval.test.ts", "evals/probe-gate.eval.test.ts", "evals/claim-check.eval.test.ts"],
         },
       },
     ],

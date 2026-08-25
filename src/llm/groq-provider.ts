@@ -13,9 +13,10 @@ export class GroqProvider implements AIProvider {
     const isReasoningModel = groqModel.includes("gpt-oss");
     const maxTokens = isReasoningModel ? Math.max(opts?.max_tokens ?? 1024, 768) : opts?.max_tokens ?? 512;
 
-    // ponytail: free-tier TPM throttles bursty suites (429) — 3 attempts w/ linear backoff
+    // ponytail: free-tier TPM throttles bursty suites (429) — 4 attempts,
+    // honoring Retry-After when present, else growing delay capped at 12s
     let lastError: Error | null = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
       const res = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -36,7 +37,13 @@ export class GroqProvider implements AIProvider {
       lastError = new Error(`Groq chat error: ${res.status} ${await res.text()}`);
       // Only retry transient failures — bad key / bad model won't heal
       if (res.status !== 429 && res.status < 500) break;
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+      if (attempt < 4) {
+        const retryAfter = parseFloat(res.headers.get("retry-after") ?? "");
+        const delay = Number.isFinite(retryAfter)
+          ? Math.min(retryAfter * 1000, 12000)
+          : Math.min(2000 * attempt, 12000);
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
     throw lastError ?? new Error("Groq chat failed");
   }
