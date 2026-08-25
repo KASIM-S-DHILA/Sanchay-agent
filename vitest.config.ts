@@ -20,6 +20,7 @@ export default defineConfig({
             "evals/executor.eval.test.ts",
             "evals/narrator.eval.test.ts",
             "evals/claim-check-integration.eval.test.ts",
+            "evals/razorpay.eval.test.ts",
           ],
         },
       },

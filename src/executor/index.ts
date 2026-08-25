@@ -1,5 +1,6 @@
 import type { Env, TurnPlan, AgentState, ProductSearchResult, ExecutorResult, ExecutedAction, CartItem } from "../types";
 import { decideTurn } from "./decide-turn";
+import { createOrder, createPaymentLink } from "../razorpay";
 
 export interface ExecutorParams {
   env: Env;
@@ -7,6 +8,7 @@ export interface ExecutorParams {
   agentState: AgentState;
   searchResults: ProductSearchResult[];
   userMessage: string;
+  sessionId?: string;
 }
 
 function calculateCartTotal(cart: CartItem[]): number {
@@ -29,7 +31,7 @@ function isClearCartPhrase(text: string): boolean {
 }
 
 export async function executeTurn(params: ExecutorParams): Promise<ExecutorResult> {
-  const { env, turnPlan, agentState, searchResults, userMessage } = params;
+  const { env, turnPlan, agentState, searchResults, userMessage, sessionId } = params;
   const mode = decideTurn(turnPlan, agentState, userMessage).mode;
 
   // Prepare initial state copies
@@ -207,15 +209,47 @@ export async function executeTurn(params: ExecutorParams): Promise<ExecutorResul
 
   if (mode === "confirm") {
     if (agentState.confirmArmed) {
-      // User confirming checkout — disarm, don't execute checkout yet (Phase 8)
-      newConfirmArmed = false;
-      return {
-        actions: [{ type: "confirm_checkout", success: true }],
-        cart: newCart,
-        cartTotal: calculateCartTotal(newCart),
-        errors: [],
-        stateChanges: { confirmArmed: false },
-      };
+      // User confirmed checkout — create Razorpay order + payment link
+      const cartTotal = agentState.cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      try {
+        const order = await createOrder(env, cartTotal, `${sessionId ?? "session"}-${Date.now()}`);
+
+        await env.DB.prepare(
+          "INSERT INTO orders (id, session_id, razorpay_order_id, amount, currency, status, items_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+          .bind(
+            crypto.randomUUID(),
+            sessionId ?? "unknown",
+            order.id,
+            cartTotal,
+            "INR",
+            "created",
+            JSON.stringify(agentState.cart),
+            new Date().toISOString(),
+          )
+          .run();
+
+        // Email: session meta userId when present, else Razorpay-link placeholder
+        const email = agentState.sessionMeta?.userId || "customer@example.com";
+        const paymentUrl = await createPaymentLink(env, order.id, email);
+
+        return {
+          actions: [{ type: "checkout_initiated", success: true, orderId: order.id, paymentUrl }],
+          cart: agentState.cart,
+          cartTotal,
+          errors: [],
+          stateChanges: { confirmArmed: false },
+        };
+      } catch (e) {
+        console.error("Checkout failed:", e);
+        return {
+          actions: [{ type: "checkout_initiated", success: false, error: "Payment gateway error" }],
+          cart: agentState.cart,
+          cartTotal,
+          errors: ["Failed to create order"],
+          stateChanges: { confirmArmed: true }, // keep armed so the user can retry
+        };
+      }
     } else {
       // Arm confirm state
       newConfirmArmed = true;
@@ -302,3 +336,4 @@ export async function executeTurn(params: ExecutorParams): Promise<ExecutorResul
     stateChanges: {},
   };
 }
+

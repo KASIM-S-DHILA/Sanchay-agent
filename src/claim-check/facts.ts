@@ -62,6 +62,14 @@ export function buildFacts(
         value: action.productName ?? action.productId ?? "item",
         productId: action.productId,
       });
+    } else if (action.type === "checkout_initiated" && action.success) {
+      // Payment link generated — checkout truly executed
+      if (!sawConfirmExecuted) {
+        sawConfirmExecuted = true;
+        facts.push({ type: "confirm_executed", value: "confirmed" });
+      }
+    } else if (!action.success && action.type === "checkout_initiated") {
+      facts.push({ type: "error", value: action.error ?? "checkout failed" });
     } else if (!action.success && action.type !== "no_action") {
       facts.push({
         type: "product_failed",

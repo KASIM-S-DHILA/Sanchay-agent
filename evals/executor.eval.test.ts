@@ -6,12 +6,28 @@ import { getProductStock, resetProductStock } from "./helpers/db";
 import type { TurnPlan, AgentState, ProductSearchResult } from "../src/types";
 
 let env: any;
+let gatewayAvailable = true;
 
 beforeAll(async () => {
   const mod: any = await import("cloudflare:test");
   env = mod.env;
   await seedCatalog(env);
-});
+  // Local D1 needs the orders table for checkout persistence
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, session_id TEXT, razorpay_order_id TEXT, amount INTEGER, currency TEXT, status TEXT, items_json TEXT, created_at TEXT)",
+  ).run();
+  // Probe Razorpay gateway auth for checkout tests
+  try {
+    const { createOrder } = await import("../src/razorpay");
+    await createOrder(env, 10000, `probe-${Date.now()}`);
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    if (msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
+      gatewayAvailable = false;
+      console.warn("Razorpay auth failed — checkout tests will skip:", msg.slice(0, 200));
+    }
+  }
+}, 60000);
 
 afterEach(async () => {
   // Restore stock for products that may have been set to 0
@@ -346,5 +362,32 @@ describe("executeTurn", () => {
     });
     expect(result.actions[0].success).toBe(true);
     expect(result.cart[0].quantity).toBe(2);
+  });
+
+  it("confirm mode with confirmArmed + non-empty cart → checkout_initiated", async () => {
+    if (!gatewayAvailable) { console.warn("Skipped: Razorpay gateway unavailable"); return; }
+    const cart = [{ productId: "TEE-BLACK-001", name: "Black Classic Tee", price: 79900, quantity: 2 }];
+    const plan = makeTurnPlan({ actions: [], requestConfirm: true, requestCancel: false });
+    const result = await executeTurn({
+      env,
+      turnPlan: plan,
+      agentState: makeAgentState({ cart, confirmArmed: true }),
+      searchResults: [],
+      userMessage: "yes",
+      sessionId: "rzp-test-session",
+    });
+
+    const action = result.actions[0];
+    expect(action.type).toBe("checkout_initiated");
+    expect(action.success).toBe(true);
+    expect(action.orderId).toMatch(/^order_/);
+    expect(action.paymentUrl).toBeTruthy();
+    expect(result.stateChanges.confirmArmed).toBe(false);
+    // Order persisted in D1
+    const row: any = await env.DB.prepare("SELECT status, amount FROM orders WHERE razorpay_order_id = ?")
+      .bind(action.orderId)
+      .first();
+    expect(row?.status).toBe("created");
+    expect(row?.amount).toBe(159800);
   });
 });

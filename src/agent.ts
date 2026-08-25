@@ -129,47 +129,97 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       detail: searchResults.map((r) => r.productId).join(","),
     });
 
-    // STAGE 3.5: Armed-cancel confirm (pre-LLM state machine)
+    // STAGE 3.5: Pre-LLM short-circuit — user confirming or cancelling
     if (this.state.confirmArmed) {
-      if (isConfirmPhrase(userMessage)) {
-        this.commitState({ confirmArmed: false });
-        this.audit({ action: "confirm.accepted", actor: "user", status: "ok", reason: "User confirmed checkout" });
-        // Still record user message
+      const isConfirm = isConfirmPhrase(userMessage);
+      const isCancel = isCancelPhrase(userMessage);
+
+      if (isConfirm) {
+        // Execute checkout immediately — no LLM needed for the decision
+        const executorResult = await executeTurn({
+          env: this.env,
+          turnPlan: { actions: [], requestConfirm: true, requestCancel: false, reasoning: "User confirmed checkout", reply: "" },
+          agentState: this.state,
+          searchResults,
+          userMessage,
+          sessionId: this.name,
+        });
+
+        if (executorResult.stateChanges && Object.keys(executorResult.stateChanges).length > 0) {
+          this.commitState(executorResult.stateChanges);
+        }
+        this.audit({
+          action: "checkout.executed",
+          actor: "user",
+          status: executorResult.actions[0].success ? "ok" : "failed",
+          reason: `order=${executorResult.actions[0].orderId ?? "none"}`,
+          detail: executorResult.actions[0].error ?? executorResult.actions[0].paymentUrl,
+        });
+
+        // Narrator describes the checkout outcome
+        let narratorReply: string;
+        try {
+          narratorReply = await callNarrator(createChatProvider(this.env), {
+            userMessage,
+            executorResult,
+            history: this.state.history,
+            cart: this.state.cart,
+            cartTotal: executorResult.cartTotal,
+            pendingIntent: this.state.pendingIntent,
+          });
+        } catch {
+          narratorReply = renderFallback(buildFacts(executorResult));
+        }
+
+        // Claim-check narrator against facts (checkout_initiated → confirm_executed)
+        const facts = buildFacts(executorResult);
+        const check = claimsConsistent(narratorReply, facts);
+        const finalReply = neverSilentGuard(check.consistent ? narratorReply : renderFallback(facts));
+
+        // Persist and respond with payment link
         const turnRecord: TurnRecord = {
           role: "user",
           content: userMessage,
           timestamp: new Date().toISOString(),
         };
         this.commitState({ history: [...this.state.history.slice(-7), turnRecord] });
-        const replyText = "Great! Initiating checkout... (Razorpay integration coming in Phase 8)";
         const assistantRecord: TurnRecord = {
           role: "assistant",
-          content: replyText,
+          content: finalReply,
           timestamp: new Date().toISOString(),
-          actions: ["confirm_checkout"],
+          actions: ["checkout"],
         };
         this.commitState({ history: [...this.state.history, assistantRecord] });
-        connection.send(JSON.stringify({ type: "chat", content: replyText, cart: this.state.cart }));
+        connection.send(
+          JSON.stringify({
+            type: "chat",
+            content: finalReply,
+            cart: this.state.cart,
+            paymentUrl: executorResult.actions.find((a) => a.type === "checkout_initiated" && a.success)?.paymentUrl,
+          }),
+        );
         return;
       }
-      if (isCancelPhrase(userMessage)) {
+
+      if (isCancel) {
+        // Disarm confirm — no LLM needed
         this.commitState({ confirmArmed: false });
         this.audit({ action: "confirm.cancelled", actor: "user", status: "ok", reason: "User cancelled checkout" });
+        const cancelReply = "No problem! Your cart is saved. What would you like to do next?";
         const turnRecord: TurnRecord = {
           role: "user",
           content: userMessage,
           timestamp: new Date().toISOString(),
         };
         this.commitState({ history: [...this.state.history.slice(-7), turnRecord] });
-        const replyText = "No problem, your cart is saved. What would you like to do?";
         const assistantRecord: TurnRecord = {
           role: "assistant",
-          content: replyText,
+          content: cancelReply,
           timestamp: new Date().toISOString(),
-          actions: ["cancel_confirmed"],
+          actions: ["cancel"],
         };
         this.commitState({ history: [...this.state.history, assistantRecord] });
-        connection.send(JSON.stringify({ type: "chat", content: replyText, cart: this.state.cart }));
+        connection.send(JSON.stringify({ type: "chat", content: cancelReply, cart: this.state.cart }));
         return;
       }
       // If armed but neither, fall through to planner (user may be modifying cart)
@@ -212,6 +262,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       agentState: this.state,
       searchResults,
       userMessage,
+      sessionId: this.name,
     });
 
     if (executorResult.stateChanges && Object.keys(executorResult.stateChanges).length > 0) {

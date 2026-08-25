@@ -3,6 +3,7 @@ import { SanchayAgent } from "./agent";
 import { embedProducts } from "./catalog/embed";
 import { searchProducts } from "./catalog/search";
 import { seedCatalog } from "./catalog/seed";
+import { hmacSHA256 } from "./crypto";
 import type { Env } from "./types";
 
 export { SanchayAgent };
@@ -52,6 +53,51 @@ export default {
         status: "not_implemented",
         message: "Verify endpoint coming in Phase 8",
       });
+    }
+
+    if (url.pathname === "/webhooks/razorpay" && request.method === "POST") {
+      // Verify webhook signature
+      const body = await request.text();
+      const signature = request.headers.get("x-razorpay-signature") || "";
+      const expectedSignature = await hmacSHA256(body, env.RAZORPAY_WEBHOOK_SECRET);
+
+      if (signature !== expectedSignature) {
+        return new Response("Invalid signature", { status: 400 });
+      }
+
+      const event = JSON.parse(body);
+
+      // Handle payment.captured event
+      if (event.event === "payment.captured") {
+        const paymentId = event.payload.payment.entity.id;
+        const orderId = event.payload.payment.entity.order_id;
+        const amount = event.payload.payment.entity.amount;
+
+        // Update order status in D1
+        await env.DB.prepare("UPDATE orders SET status = 'paid' WHERE razorpay_order_id = ?")
+          .bind(orderId)
+          .run();
+
+        // Webhooks bypass the DO — write audit directly to D1 audit_logs
+        await env.DB.prepare(
+          "INSERT INTO audit_logs (id, session_id, action, intent, params_json, result_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+          .bind(
+            crypto.randomUUID(),
+            "",
+            "payment.captured",
+            "payment",
+            JSON.stringify({ paymentId, orderId }),
+            JSON.stringify({ amount }),
+            "ok",
+            new Date().toISOString(),
+          )
+          .run();
+
+        return Response.json({ status: "ok" });
+      }
+
+      return Response.json({ status: "ignored", event: event.event });
     }
 
     if (url.pathname === "/audit") {

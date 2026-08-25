@@ -64,6 +64,8 @@ export interface ExecutedAction {
   success: boolean;
   error?: string;
   price?: number;
+  orderId?: string;
+  paymentUrl?: string;
 }
 
 export interface ProductSearchResult {
@@ -85,5 +87,6 @@ export interface Env {
   ASSETS: Fetcher;
   RAZORPAY_KEY_ID: string;
   RAZORPAY_KEY_SECRET: string;
+  RAZORPAY_WEBHOOK_SECRET: string;
   JWT_SIGNING_KEY: string;
 }

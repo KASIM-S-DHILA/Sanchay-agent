@@ -10,7 +10,7 @@ export default function App() {
   const [showAudit, setShowAudit] = useState(true);
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: string; content: string; paymentUrl?: string }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const agent = useAgent<AgentState>({
@@ -27,6 +27,12 @@ export default function App() {
         typeof message.data === "string" ? JSON.parse(message.data) : message.data;
       if (data.type === "chat") {
         setMessages((prev) => [...prev, { role: "assistant", content: data.content }]);
+        if (data.paymentUrl) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "system", content: "💳 Payment link ready:", paymentUrl: data.paymentUrl },
+          ]);
+        }
       }
       if (data.type === "connected") {
         setMessages((prev) => [
@@ -77,7 +83,15 @@ export default function App() {
                 <div className="msg-role">
                   {m.role === "user" ? "🧑 You" : m.role === "assistant" ? "🤖 Agent" : "🔗 System"}
                 </div>
-                <div className="msg-text">{m.content}</div>
+                <div className="msg-text">
+                  {m.paymentUrl ? (
+                    <a href={m.paymentUrl} target="_blank" rel="noopener noreferrer" className="payment-link">
+                      Pay Now →
+                    </a>
+                  ) : (
+                    m.content
+                  )}
+                </div>
               </div>
             ))}
             {!connected && <div className="msg system typing">🔗 Connecting…</div>}
