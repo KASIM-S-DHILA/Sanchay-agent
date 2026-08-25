@@ -1,0 +1,163 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #171a21;
+  --border: #262b36;
+  --text: #e6e9ef;
+  --muted: #8a93a6;
+  --accent: #4f8cff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.header h1 {
+  font-size: 1.4rem;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.buyer-input,
+.composer-input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.buyer-input {
+  width: 240px;
+}
+
+.toggle-btn,
+.send-btn,
+.hints button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 12px;
+}
+
+.send-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-height: 60vh;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 55vh;
+  padding: 12px;
+}
+
+.msg {
+  margin-bottom: 10px;
+}
+
+.msg-role {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.msg-text {
+  white-space: pre-wrap;
+}
+
+.msg.user .msg-text {
+  background: #1d2330;
+  border-radius: 8px;
+  display: inline-block;
+  padding: 6px 10px;
+}
+
+.typing {
+  color: var(--muted);
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.composer-input {
+  flex: 1;
+}
+
+.hints {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 12px 12px;
+  color: var(--muted);
+}
+
+.audit-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.audit-trail ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.audit-trail li {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 6px 0;
+}

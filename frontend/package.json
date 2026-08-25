@@ -1,0 +1,25 @@
+{
+  "name": "sanchay-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "agents": "^0.21.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "core-js-pure@3.50.0": true
+  }
+}
