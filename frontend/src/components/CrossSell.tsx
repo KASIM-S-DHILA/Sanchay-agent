@@ -11,20 +11,21 @@ export interface CrossSellSuggestion {
 
 /**
  * Renders the backend's youMightAlsoLike suggestions (see getCart/addToCart
- * in src/api/logic.ts) as a small horizontal strip beneath the bill. Reuses
- * ProductCard so image-safety/fallback handling stays in one place. Renders
- * nothing when there are no suggestions — no placeholder/empty state, since
- * an empty array here is a normal outcome (no real cross-sell signal yet),
- * not something to draw attention to.
+ * in src/api/logic.ts). Reuses ProductCard so image-safety/fallback handling
+ * stays in one place. Renders nothing when there are no suggestions — no
+ * placeholder, since an empty array is a normal outcome (no real cross-sell
+ * signal yet), not something to draw attention to.
  */
 export function CrossSell({
   suggestions,
   onAdd,
   addingId,
+  justAddedId,
 }: {
   suggestions: CrossSellSuggestion[];
   onAdd: (productId: string) => void;
   addingId: string | null;
+  justAddedId: string | null;
 }) {
   if (!suggestions || suggestions.length === 0) return null;
 
@@ -39,13 +40,24 @@ export function CrossSell({
   }));
 
   return (
-    <div className="cross-sell">
-      <span className="cross-sell-label">You might also like</span>
-      <ul className="cross-sell-list">
-        {products.map((p) => (
-          <ProductCard key={p.id} product={p} onAdd={onAdd} adding={addingId === p.id} />
-        ))}
-      </ul>
-    </div>
+    <section className="panel" aria-label="Goes with your bill">
+      <div className="panel-head">
+        <h2 className="panel-title">Goes with your bill</h2>
+        <span className="panel-note">based on what you've added</span>
+      </div>
+      <div className="shelf-body">
+        <ul className="shelf-grid">
+          {products.map((p) => (
+            <ProductCard
+              key={p.id}
+              product={p}
+              onAdd={onAdd}
+              adding={addingId === p.id}
+              justAdded={justAddedId === p.id}
+            />
+          ))}
+        </ul>
+      </div>
+    </section>
   );
 }

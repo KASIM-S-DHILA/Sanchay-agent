@@ -1,23 +1,70 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* ==========================================================================
+   Sanchay — a voice-operated shop counter.
+
+   Design thesis: the app is a STEEL COUNTER — cool, quiet, dense, the kind
+   of tool a shopkeeper uses ten hours a day. Exactly one object on it is
+   warm and physical: THE BILL. That temperature inversion is the whole
+   identity, and it is spent nowhere else. Every other surface stays
+   disciplined so the bill reads as the artifact that represents money,
+   distinct from the tool that manipulates it.
+
+   Consequences, deliberately:
+   - Display type (Archivo Expanded) appears in three places only: the brand
+     mark, the bill's header, and the PAID stamp. Never on UI labels or data.
+   - Monospace (Sometype Mono) appears on the bill and on raw machine output
+     only. UI figures use tabular-nums on the body face instead.
+   - One accent (--live) marks the agent being live. Nothing decorative uses
+     colour; semantic colours are reserved for money outcomes.
+   ========================================================================== */
 
 :root {
-  --paper: #ECEFF2;
-  --panel: #FFFFFF;
-  --ink: #12161F;
-  --faded: #5A667A;
-  --grid: #C9D2E3;
-  --grid-strong: #A8B5CC;
-  --cobalt: #2E5BFF;
-  --cobalt-press: #1E3FCC;
-  --chalk: #FFE536;
-  --vermilion: #E23E30;
-  --mint: #0A5C36;
-  --line: #D8DEE9;
-  --radius-lg: 16px;
-  --radius-md: 10px;
-  --radius-sm: 6px;
-  --shadow-soft: 0 1px 2px rgba(18, 22, 31, 0.06), 0 8px 24px rgba(18, 22, 31, 0.06);
-  --shadow-receipt: 0 4px 0 rgba(18, 22, 31, 0.08), 0 12px 32px rgba(18, 22, 31, 0.10);
+  /* — the counter: cool steel — */
+  --counter: #E4E8EE;
+  --counter-deep: #D5DBE4;
+  --surface: #FFFFFF;
+  --surface-2: #F5F7FA;
+  --ink: #14181D;
+  --ink-2: #39424F;
+  --muted: #6B7684;
+  --rule: #D3D9E2;
+  --rule-strong: #B9C2CE;
+
+  /* — the bill: warm paper. Used ONLY inside .bill — */
+  --paper: #FBF6EA;
+  --paper-2: #F4EDDC;
+  --paper-rule: #DFD4BA;
+  --carbon: #2E2A22;
+  --carbon-2: #6E6554;
+
+  /* — live: the agent is listening or speaking — */
+  --live: #0E7C7B;
+  --live-deep: #0A6160;
+  --live-wash: #E4F1F0;
+
+  /* — money outcomes — */
+  --paid: #15803D;
+  --paid-wash: #E7F3EB;
+  --block: #B45309;
+  --block-wash: #FBF0E0;
+  --error: #C0342B;
+  --error-wash: #FCEEEC;
+
+  /* — type — */
+  --sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --display: "Archivo", var(--sans);
+  --mono: "Sometype Mono", ui-monospace, "SF Mono", monospace;
+
+  /* — geometry: an instrument, so tight — */
+  --r1: 3px;
+  --r2: 6px;
+  --r3: 10px;
+  --pad: 16px;
+
+  --shadow-1: 0 1px 2px rgba(20, 24, 29, 0.05);
+  --shadow-2: 0 1px 2px rgba(20, 24, 29, 0.06), 0 8px 20px -10px rgba(20, 24, 29, 0.18);
+  --shadow-paper: 0 1px 0 rgba(46, 42, 34, 0.09), 0 12px 26px -14px rgba(20, 24, 29, 0.26);
+
+  --t: 160ms cubic-bezier(0.2, 0, 0.3, 1);
 }
 
 * {
@@ -25,869 +72,33 @@
 }
 
 html {
+  color-scheme: light;
   scrollbar-gutter: stable;
 }
 
 body {
   margin: 0;
-  background: var(--paper);
+  background: var(--counter);
   color: var(--ink);
-  font-family: "Inter", system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-family: var(--sans);
+  font-size: 0.875rem;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-a {
-  color: var(--cobalt);
+button,
+input {
+  font: inherit;
+  color: inherit;
 }
 
 :focus-visible {
-  outline: 2px solid var(--cobalt);
+  outline: 2px solid var(--live);
   outline-offset: 2px;
+  border-radius: var(--r1);
 }
 
-@media (prefers-reduced-motion: reduce) {
-
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-
-/* App shell */
-.app {
-  max-width: 1160px;
-  margin: 0 auto;
-  padding: 24px 20px 48px;
-}
-
-/* — Header: shop signboard — */
-.header {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 20px;
-  align-items: end;
-  padding: 18px 0 20px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 22px;
-}
-
-.brand {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.brand-top {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.brand h1 {
-  font-family: "Syne", sans-serif;
-  font-weight: 800;
-  font-size: 30px;
-  letter-spacing: -0.04em;
-  line-height: 0.9;
-  margin: 0;
-  text-transform: uppercase;
-}
-
-.brand h1 span {
-  font-weight: 700;
-  color: var(--cobalt);
-}
-
-.eyebrow {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--faded);
-  font-weight: 500;
-}
-
-.subtitle {
-  margin: 0;
-  color: var(--faded);
-  font-size: 13.5px;
-  max-width: 48ch;
-}
-
-.header-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
-  min-width: 280px;
-}
-
-.session-start {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  justify-content: flex-end;
-}
-
-.buyer-input {
-  flex: 1;
-  max-width: 260px;
-  background: var(--panel);
-  border: 1px solid var(--grid);
-  border-radius: 999px;
-  color: var(--ink);
-  padding: 9px 14px;
-  font-size: 13.5px;
-  font-family: inherit;
-  box-shadow: 0 1px 0 rgba(18, 22, 31, 0.04);
-}
-
-.buyer-input::placeholder {
-  color: #8B95A8;
-}
-
-.buyer-input:focus {
-  border-color: var(--cobalt);
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(46, 91, 255, 0.15);
-}
-
-.send-btn {
-  background: var(--ink);
-  border: 1px solid var(--ink);
-  color: var(--paper);
-  border-radius: 999px;
-  padding: 9px 16px;
-  font-weight: 600;
-  font-size: 13.5px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 120ms, transform 120ms;
-}
-
-.send-btn:hover {
-  background: #1E2534;
-}
-
-.send-btn:active {
-  transform: translateY(1px);
-}
-
-.send-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-
-.meta {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  width: 100%;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 600;
-  padding: 4px 9px;
-  line-height: 1;
-  border: 1px solid transparent;
-}
-
-.badge-ok {
-  background: var(--chalk);
-  color: var(--ink);
-  border-color: rgba(18, 22, 31, 0.08);
-}
-
-.badge-ok::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--mint);
-}
-
-.session-id {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 3px 8px;
-  color: var(--faded);
-}
-
-.meta-email {
-  color: var(--faded);
-}
-
-/* — Layout: counter — */
-.layout {
-  display: grid;
-  grid-template-columns: 1.65fr 0.95fr;
-  gap: 18px;
-  align-items: start;
-}
-
-@media (max-width: 880px) {
-  .header {
-    grid-template-columns: 1fr;
-  }
-
-  .header-actions {
-    align-items: stretch;
-  }
-
-  .session-start {
-    justify-content: stretch;
-  }
-
-  .buyer-input {
-    max-width: none;
-  }
-
-  .layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* — Tape panel (left) — */
-.chat-panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-soft);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 560px;
-}
-
-/* Voice section */
-.voice-container {
-  padding: 18px 18px 16px;
-  border-bottom: 1px solid var(--line);
-  background:
-    radial-gradient(circle at 1px 1px, rgba(201, 210, 227, 0.7) 1px, transparent 0) 0 0 / 18px 18px,
-    linear-gradient(var(--panel), var(--panel));
-}
-
-.voice-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.voice-head h2 {
-  font-family: "Syne", sans-serif;
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 700;
-  margin: 0;
-  color: var(--ink);
-}
-
-.voice-head .ledger-no {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  color: var(--faded);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.voice-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.voice-hint {
-  color: var(--faded);
-  font-size: 13px;
-  line-height: 1.5;
-  margin: 0;
-  max-width: 48ch;
-}
-
-.voice-hint strong {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-/* Voice button — measuring tape */
-.voice-btn {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--cobalt);
-  color: white;
-  border: 1px solid var(--cobalt);
-  border-radius: 999px;
-  padding: 11px 18px;
-  font-weight: 700;
-  font-size: 14px;
-  cursor: pointer;
-  box-shadow: 0 6px 16px rgba(46, 91, 255, 0.25);
-  transition: background 120ms, transform 120ms, box-shadow 120ms;
-  font-family: "Inter", sans-serif;
-}
-
-.voice-btn:hover {
-  background: var(--cobalt-press);
-  box-shadow: 0 8px 20px rgba(46, 91, 255, 0.32);
-}
-
-.voice-btn:active {
-  transform: translateY(1px);
-}
-
-.voice-btn.connecting {
-  background: var(--panel);
-  color: var(--faded);
-  border-color: var(--grid);
-  box-shadow: none;
-}
-
-.voice-status {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 8px 12px 8px 10px;
-  align-self: flex-start;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: "JetBrains Mono", monospace;
-  letter-spacing: -0.01em;
-}
-
-.voice-status.listening {
-  border-color: var(--chalk);
-  background: #FFFBE5;
-}
-
-.voice-status.speaking {
-  border-color: var(--cobalt);
-  background: #EFF2FF;
-}
-
-/* Measuring tape meter */
-.tape-meter {
-  width: 88px;
-  height: 10px;
-  border-radius: 999px;
-  background: repeating-linear-gradient(90deg, var(--ink) 0 2px, transparent 2px 8px);
-  position: relative;
-  overflow: hidden;
-  flex-shrink: 0;
-  border: 1px solid rgba(18, 22, 31, 0.12);
-}
-
-.tape-meter::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 229, 54, 0.9) 35%, rgba(255, 229, 54, 0.9) 65%, transparent 100%);
-  transform: translateX(-100%);
-  animation: tapeSlide 900ms linear infinite;
-}
-
-.voice-status.speaking .tape-meter::after {
-  animation-duration: 700ms;
-  background: linear-gradient(90deg, transparent 0%, rgba(46, 91, 255, 0.85) 35%, rgba(46, 91, 255, 0.85) 65%, transparent 100%);
-}
-
-@keyframes tapeSlide {
-  to {
-    transform: translateX(100%);
-  }
-}
-
-.pulse-dot {
-  display: none;
-}
-
-/* hide old dots, keep class for compatibility */
-.stop-btn {
-  margin-left: 6px;
-  background: var(--ink);
-  color: white;
-  border: 0;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-weight: 700;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.stop-btn:hover {
-  background: #2A3245;
-}
-
-.voice-error {
-  background: #FFF0EE;
-  border: 1px solid #F3B8B2;
-  color: #7A1F16;
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  font-size: 13px;
-  margin: 0;
-}
-
-/* Transcript tape */
-.transcripts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 260px;
-  overflow-y: auto;
-  padding-right: 2px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--grid) transparent;
-}
-
-.transcript {
-  max-width: 92%;
-  padding: 9px 12px;
-  border-radius: 14px;
-  font-size: 13.5px;
-  line-height: 1.5;
-  position: relative;
-  word-break: break-word;
-}
-
-.transcript.user {
-  align-self: flex-end;
-  background: var(--ink);
-  color: var(--paper);
-  border-bottom-right-radius: 4px;
-}
-
-.transcript.agent {
-  align-self: flex-start;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  color: var(--ink);
-  border-bottom-left-radius: 4px;
-}
-
-.transcript.agent::before {
-  content: "Sanchay";
-  display: block;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--faded);
-  margin-bottom: 2px;
-}
-
-/* Cart — inside tape */
-.cart-display {
-  padding: 16px 18px 18px;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.cart-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.cart-head h2 {
-  font-family: "Syne", sans-serif;
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 700;
-  margin: 0;
-}
-
-.cart-meta {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--faded);
-}
-
-.cart-empty {
-  color: var(--faded);
-  font-size: 13.5px;
-  background: #F7F8FA;
-  border: 1px dashed var(--grid);
-  border-radius: var(--radius-md);
-  padding: 14px;
-  text-align: center;
-}
-
-.cart-empty strong {
-  color: var(--ink);
-}
-
-.cart-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.cart-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 12px;
-  align-items: end;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 13.5px;
-}
-
-.cart-row:last-child {
-  border-bottom: none;
-}
-
-.cart-name {
-  font-weight: 500;
-}
-
-.cart-qty {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.cart-dots {
-  border-bottom: 1px dotted var(--grid);
-  margin: 0 6px 4px;
-  flex: 1;
-  opacity: 0.7;
-}
-
-.cart-price {
-  font-family: "JetBrains Mono", monospace;
-  font-weight: 600;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.cart-total {
-  margin-top: 4px;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--ink);
-  color: var(--paper);
-  border-radius: var(--radius-md);
-}
-
-.cart-total strong {
-  font-family: "Syne", sans-serif;
-  font-size: 18px;
-  letter-spacing: -0.02em;
-}
-
-.budget-left {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.65);
-  font-weight: 400;
-}
-
-.order-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: #FFF3D6;
-  border: 1px solid #E8C87A;
-  color: #6B4A00;
-  border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: "JetBrains Mono", monospace;
-  align-self: flex-start;
-}
-
-.order-status strong {
-  font-weight: 700;
-  color: #4A3200;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.order-status code {
-  background: rgba(107, 74, 0, 0.1);
-  padding: 1px 5px;
-  border-radius: 999px;
-}
-
-/* — Receipt (right) — */
-.audit-panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-receipt);
-  overflow: hidden;
-  position: sticky;
-  top: 18px;
-}
-
-/* receipt header */
-.audit-panel .audit-trail>h2 {
-  font-family: "Syne", sans-serif;
-  font-size: 12px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  font-weight: 700;
-  margin: 0;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  background: var(--panel);
-}
-
-.audit-panel .audit-trail>h2::after {
-  content: "Carbon copy • not a tax invoice";
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--faded);
-  font-weight: 400;
-}
-
-.audit-trail {
-  display: flex;
-  flex-direction: column;
-}
-
-.audit-trail>p {
-  margin: 0;
-  padding: 18px 16px;
-  color: var(--faded);
-  font-size: 13px;
-  text-align: center;
-  background: repeating-linear-gradient(0deg, transparent 0 22px, rgba(201, 210, 227, 0.35) 22px 23px);
-  min-height: 120px;
-  display: grid;
-  place-content: center;
-}
-
-.audit-trail ul {
-  list-style: none;
-  margin: 0;
-  padding: 8px 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 64vh;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--grid) transparent;
-  background:
-    linear-gradient(var(--panel), var(--panel)) padding-box,
-    repeating-linear-gradient(0deg, transparent 0 28px, rgba(201, 210, 227, 0.18) 28px 29px) border-box;
-}
-
-.audit-entry {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 9px 10px;
-  transition: border-color 120ms;
-}
-
-.audit-entry:hover {
-  border-color: var(--grid-strong);
-}
-
-.audit-entry.audit-ok {
-  border-left: 3px solid var(--cobalt);
-}
-
-.audit-entry.audit-error {
-  border-left: 3px solid var(--vermilion);
-}
-
-.audit-entry.audit-blocked {
-  border-left: 3px solid #C9A227;
-}
-
-.audit-head {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  flex-wrap: wrap;
-  font-size: 12px;
-}
-
-.audit-head strong {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.audit-duration {
-  margin-left: auto;
-  color: var(--faded);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  padding: 1px 6px;
-  border-radius: 999px;
-}
-
-.badge {
-  /* keep for audit, refined */
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 700;
-  padding: 3px 7px;
-  line-height: 1;
-  border: 1px solid transparent;
-}
-
-.badge-ok {
-  background: #EFF2FF;
-  color: var(--cobalt);
-  border-color: #C9D2FF;
-}
-
-.badge-error {
-  background: #FFF0EE;
-  color: var(--vermilion);
-  border-color: #F3B8B2;
-}
-
-.badge-blocked {
-  background: #FFF8E1;
-  color: #7A5A00;
-  border-color: #F2D98B;
-}
-
-.audit-entry pre {
-  background: #F7F8FA;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  overflow-x: auto;
-  padding: 8px;
-  margin: 8px 0 0;
-  color: #2B3342;
-}
-
-.audit-entry summary {
-  color: var(--faded);
-  cursor: pointer;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  margin-top: 6px;
-  list-style: none;
-}
-
-.audit-entry summary::-webkit-details-marker {
-  display: none;
-}
-
-.audit-entry summary::before {
-  content: "▸ ";
-  font-size: 9px;
-}
-
-.audit-entry[open] summary::before {
-  content: "▾ ";
-}
-
-/* Perforation between panels */
-@media (min-width: 881px) {
-  .audit-panel {
-    position: sticky;
-    top: 18px;
-  }
-
-  .audit-panel::before {
-    content: "";
-    position: absolute;
-    left: -10px;
-    top: 24px;
-    bottom: 24px;
-    width: 10px;
-    background: radial-gradient(circle at 5px 6px, transparent 5px, var(--paper) 5.5px) 0 0 / 10px 12px repeat-y;
-    filter: drop-shadow(-1px 0 0 var(--line));
-    pointer-events: none;
-  }
-}
-
-/* Stamp */
-.stamp {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transform: rotate(-1.5deg);
-  border: 1.5px solid var(--vermilion);
-  color: var(--vermilion);
-  font-family: "Syne", sans-serif;
-  font-weight: 800;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  padding: 3px 8px;
-  border-radius: 4px;
-  background: rgba(226, 62, 48, 0.06);
-}
-
-/* Utility */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -895,385 +106,1485 @@ a {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
-  border: 0;
 }
 
-/* — Catalog panel (below the counter) — */
-.catalog-panel {
-  margin-top: 22px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-soft);
-  padding: 18px 18px 20px;
+/* ==========================================================================
+   Shell
+   ========================================================================== */
+
+.counter {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-.catalog-head {
+/* — Top bar: identity, the session's live facts, and the mic. The mic lives
+     here so it can never scroll out of reach mid-conversation. — */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  /* Explicit fallback first: if color-mix is unsupported the bar must still
+     be opaque, or content scrolls visibly underneath it. */
+  background: #EAEDF1;
+  background: color-mix(in srgb, var(--counter) 88%, white);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.topbar-inner {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 10px 20px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
+  gap: 20px;
 }
 
-.catalog-head h2 {
-  font-family: "Syne", sans-serif;
-  font-size: 13px;
-  letter-spacing: 0.08em;
+.mark {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-shrink: 0;
+}
+
+.mark-name {
+  font-family: var(--display);
+  font-stretch: 125%;
+  font-weight: 800;
+  font-size: 1.125rem;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
-  font-weight: 700;
   margin: 0;
-  color: var(--ink);
+  line-height: 1;
 }
 
-.catalog-search {
+.mark-role {
+  font-size: 0.75rem;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+}
+
+.topbar-facts {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 18px;
+  margin-left: auto;
+  min-width: 0;
 }
 
-.catalog-search-input {
-  background: var(--paper);
-  border: 1px solid var(--grid);
-  border-radius: 999px;
-  color: var(--ink);
-  padding: 8px 14px;
-  font-size: 13px;
-  font-family: inherit;
-  min-width: 220px;
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
-.catalog-search-input::placeholder {
-  color: #8B95A8;
+.fact-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1.2;
 }
 
-.catalog-search-input:focus {
-  border-color: var(--cobalt);
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(46, 91, 255, 0.15);
-}
-
-.catalog-search-btn {
-  background: var(--ink);
-  border: 1px solid var(--ink);
-  color: var(--paper);
-  border-radius: 999px;
-  padding: 8px 14px;
+.fact-value {
+  font-size: 0.8125rem;
   font-weight: 600;
-  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fact-value.is-over {
+  color: var(--block);
+}
+
+/* Workspace: work surface + sticky rail */
+.workspace {
+  flex: 1;
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 18px 20px 56px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 18px;
+  align-items: start;
+}
+
+.work {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rail {
+  position: sticky;
+  top: 66px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* A panel is the one container primitive. Everything cool-toned uses it. */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r3);
+  box-shadow: var(--shadow-1);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-2);
+  border-radius: var(--r3) var(--r3) 0 0;
+}
+
+.panel-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 0;
+}
+
+.panel-note {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Controls — one vocabulary, every state present
+   ========================================================================== */
+
+.btn {
+  --btn-bg: var(--surface);
+  --btn-fg: var(--ink);
+  --btn-bd: var(--rule-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: 1px solid var(--btn-bd);
+  border-radius: var(--r2);
+  padding: 8px 13px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--t), border-color var(--t), color var(--t), transform var(--t);
 }
 
-.catalog-search-btn:hover {
-  background: #1E2534;
+.btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--btn-bg) 92%, var(--ink));
 }
 
-.catalog-search-btn:disabled {
-  opacity: 0.5;
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.btn-primary {
+  --btn-bg: var(--ink);
+  --btn-fg: #F7F9FB;
+  --btn-bd: var(--ink);
+}
+
+.btn-live {
+  --btn-bg: var(--live);
+  --btn-fg: #FFFFFF;
+  --btn-bd: var(--live);
+}
+
+.btn-quiet {
+  --btn-bg: transparent;
+  --btn-fg: var(--ink-2);
+  --btn-bd: transparent;
+  padding: 5px 8px;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--counter-deep);
+  color: var(--ink);
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  border-radius: var(--r1);
+}
+
+.btn-wide {
+  width: 100%;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r2);
+  padding: 8px 11px;
+  font-size: 0.8125rem;
+  transition: border-color var(--t), box-shadow var(--t);
+}
+
+.input::placeholder {
+  color: #9AA4B2;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--live);
+  box-shadow: 0 0 0 3px var(--live-wash);
+}
+
+.input-row {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+/* ==========================================================================
+   Voice dock — the mic, a real level meter, and the running transcript
+   ========================================================================== */
+
+/* The mic sticks below the top bar so it is never scrolled out of reach in
+   the middle of a conversation. It is the only voice control in the app —
+   duplicating it into the top bar would mean two controls for one action. */
+.dock {
+  overflow: hidden;
+  position: sticky;
+  top: 54px;
+  z-index: 15;
+  box-shadow: var(--shadow-2);
+}
+
+.dock-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  flex-wrap: wrap;
+}
+
+.talk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: var(--r2);
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #F7F9FB;
+  cursor: pointer;
+  transition: background var(--t), border-color var(--t), transform var(--t);
+}
+
+.talk-btn:hover:not(:disabled) {
+  background: #22282F;
+}
+
+.talk-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.talk-btn:disabled {
   cursor: not-allowed;
 }
 
-.catalog-error {
-  color: #7A1F16;
-  background: #FFF0EE;
-  border: 1px solid #F3B8B2;
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  font-size: 13px;
-  margin: 0 0 12px;
+.talk-btn.is-connecting {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--rule-strong);
 }
 
-.catalog-empty {
-  color: var(--faded);
-  font-size: 13.5px;
-  text-align: center;
-  padding: 24px 0;
+.talk-btn.is-live {
+  background: var(--surface);
+  color: var(--live-deep);
+  border-color: var(--live);
+}
+
+/* The mic glyph: a filled dot in a ring. Drawn, not an emoji, so it inherits
+   colour and weight from the button state. */
+.talk-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.talk-btn.is-live .talk-dot {
+  background: var(--live);
+  box-shadow: 0 0 0 3px var(--live-wash);
+}
+
+/* — Level meter. Bars are driven by --level, the real RMS amplitude of the
+     audio actually flowing, not by a keyframe loop. Silence reads as
+     silence, which is the point. — */
+.meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.meter-bar {
+  width: 3px;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--rule-strong);
+  transform-origin: bottom;
+  transform: scaleY(0.12);
+  transition: transform 90ms linear, background var(--t);
+}
+
+.meter.is-active .meter-bar {
+  background: var(--live);
+}
+
+.meter.is-agent .meter-bar {
+  background: var(--ink-2);
+}
+
+/* Coefficients vary per bar so the shape reads as a waveform rather than a
+   block, while every bar still derives from the one measured value. */
+.meter-bar:nth-child(1) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 0.45));
+}
+
+.meter-bar:nth-child(2) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 0.75));
+}
+
+.meter-bar:nth-child(3) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 1));
+}
+
+.meter-bar:nth-child(4) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 0.62));
+}
+
+.meter-bar:nth-child(5) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 0.88));
+}
+
+.meter-bar:nth-child(6) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 0.5));
+}
+
+.meter-bar:nth-child(7) {
+  transform: scaleY(calc(0.12 + var(--level, 0) * 0.7));
+}
+
+.dock-state {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.dock-state-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dock-state-label.is-live {
+  color: var(--live-deep);
+}
+
+.dock-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.dock-end {
+  margin-left: auto;
+}
+
+/* Opening state: teaches the three things worth saying first. */
+.dock-open {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dock-open-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.try {
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color var(--t), color var(--t), background var(--t);
+}
+
+.try:hover {
+  border-color: var(--live);
+  color: var(--live-deep);
+  background: var(--live-wash);
+}
+
+.try-quote {
+  color: var(--muted);
+}
+
+/* — Transcript. Plain rows, not chat bubbles: this is a record of what was
+     said at a counter, and the speaker matters more than the container. — */
+.tape {
+  border-top: 1px solid var(--rule);
+  max-height: 208px;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.tape-turn {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 10px;
+  padding: 5px 14px;
+  align-items: baseline;
+}
+
+.tape-who {
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+  padding-top: 2px;
+}
+
+.tape-turn.is-agent .tape-who {
+  color: var(--live-deep);
+  font-weight: 600;
+}
+
+.tape-text {
+  font-size: 0.8125rem;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.tape-turn.is-user .tape-text {
+  color: var(--ink-2);
+}
+
+.dock-error {
   margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--rule);
+  background: var(--error-wash);
+  color: #7C231C;
+  font-size: 0.8125rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.product-grid {
+/* ==========================================================================
+   Shelf — what the counter is showing you right now
+   ========================================================================== */
+
+.shelf-head {
+  flex-wrap: wrap;
+}
+
+/* Why the shelf currently shows what it shows. Reads as caused, not random. */
+.shelf-why {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.shelf-why strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.shelf-why.is-agent strong {
+  color: var(--live-deep);
+}
+
+.shelf-search {
+  margin-left: auto;
+  display: flex;
+  gap: 7px;
+}
+
+.shelf-search .input {
+  width: 190px;
+}
+
+.shelf-body {
+  padding: 14px;
+}
+
+.shelf-grid {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 12px;
 }
 
-.product-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  overflow: hidden;
+/* — Product card — */
+.card {
   display: flex;
   flex-direction: column;
-  background: var(--panel);
-  transition: border-color 120ms, box-shadow 120ms;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r2);
+  overflow: hidden;
+  transition: border-color var(--t), box-shadow var(--t);
 }
 
-.product-card:hover {
-  border-color: var(--grid-strong);
-  box-shadow: var(--shadow-soft);
+.card:hover {
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-2);
 }
 
-.product-image-wrap {
+.card.is-out {
+  opacity: 0.72;
+}
+
+.card-media {
   position: relative;
-  background: var(--paper);
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 1;
+  background: var(--surface-2);
   overflow: hidden;
 }
 
-.product-image {
+.card-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
 
-.product-oos {
+.card-tag {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 7px;
+  left: 7px;
   background: var(--ink);
-  color: var(--paper);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: #F7F9FB;
+  font-size: 0.625rem;
   font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   padding: 3px 7px;
-  border-radius: 999px;
+  border-radius: var(--r1);
 }
 
-.product-info {
-  padding: 10px 12px 12px;
+.card-body {
+  padding: 9px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+
+.card-cat {
+  font-size: 0.625rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.card-name {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.card-foot {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-price {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-added {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--paid);
+}
+
+/* Skeletons: the shelf keeps its shape while loading instead of collapsing
+   and then jumping. */
+.sk-card {
+  border: 1px solid var(--rule);
+  border-radius: var(--r2);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.sk-media {
+  aspect-ratio: 1;
+  background: var(--surface-2);
+}
+
+.sk-lines {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sk-line {
+  height: 9px;
+  border-radius: 999px;
+  background: var(--counter-deep);
+}
+
+.sk-line.is-short {
+  width: 45%;
+}
+
+.sk-card,
+.sk-line,
+.sk-media {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Empty states teach the interface rather than reporting absence. */
+.empty {
+  padding: 30px 18px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.empty-lead {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.875rem;
+  margin: 0 0 5px;
+}
+
+.empty p {
+  margin: 0;
+}
+
+/* ==========================================================================
+   THE BILL — the one warm object on the counter. This is the signature.
+   ========================================================================== */
+
+.bill {
+  background:
+    linear-gradient(var(--paper), var(--paper));
+  border: 1px solid var(--paper-rule);
+  border-radius: var(--r2);
+  box-shadow: var(--shadow-paper);
+  color: var(--carbon);
+  overflow: hidden;
+  /* The bill is the only place the mono face and warm palette appear. */
+  font-family: var(--mono);
+}
+
+.bill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--paper-rule);
+  background: var(--paper-2);
+}
+
+.bill-mark {
+  font-family: var(--display);
+  font-stretch: 125%;
+  font-weight: 800;
+  font-size: 0.8125rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.bill-no {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: var(--carbon-2);
+}
+
+.bill-lines {
+  list-style: none;
+  margin: 0;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Leader dots: the item, a run of dots, the amount. The oldest legible way
+   to tie a name to a number, and it survives any column width. */
+.bill-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.75rem;
+  padding: 3px 0;
+}
+
+.bill-qty {
+  color: var(--carbon-2);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.bill-item {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bill-leader {
+  flex: 1 1 12px;
+  min-width: 10px;
+  border-bottom: 1px dotted var(--paper-rule);
+  transform: translateY(-3px);
+}
+
+.bill-amt {
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.bill-drop {
+  border: 0;
+  border-top: 1px solid var(--paper-rule);
+  margin: 6px 14px 0;
+}
+
+.bill-sum {
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bill-sum-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.75rem;
+  color: var(--carbon-2);
+}
+
+.bill-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--paper-rule);
+}
+
+.bill-total-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--carbon-2);
+}
+
+.bill-total-amt {
+  font-size: 1.1875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.bill-empty {
+  padding: 22px 16px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--carbon-2);
+  line-height: 1.6;
+}
+
+.bill-empty strong {
+  color: var(--carbon);
+}
+
+/* — Spending cap. "Bounded" has to be visible to be believed. — */
+.cap {
+  padding: 11px 14px 13px;
+  border-top: 1px dashed var(--paper-rule);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--carbon-2);
+}
+
+.cap-left {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.75rem;
+  color: var(--carbon);
+}
+
+.cap-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--paper-2);
+  border: 1px solid var(--paper-rule);
+  overflow: hidden;
+}
+
+.cap-fill {
+  height: 100%;
+  background: var(--carbon);
+  transition: width var(--t);
+}
+
+.cap-fill.is-tight {
+  background: var(--block);
+}
+
+.cap-note {
+  font-size: 0.6875rem;
+  color: var(--carbon-2);
+  line-height: 1.5;
+}
+
+/* The cap form borrows the counter's control vocabulary, not the paper's —
+   inputs are tools, and tools stay consistent everywhere in the app. */
+.cap-form {
+  display: flex;
+  gap: 6px;
+  font-family: var(--sans);
+}
+
+.cap-form .input {
+  padding: 6px 9px;
+  font-size: 0.75rem;
+}
+
+/* — Payment — */
+.pay {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--paper-rule);
+  background: var(--paper-2);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-family: var(--sans);
+}
+
+.pay-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.product-category {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--faded);
-}
-
-.product-name {
-  font-size: 13.5px;
-  font-weight: 600;
-  margin: 0;
-  line-height: 1.3;
-  color: var(--ink);
-}
-
-.product-row {
+.pay-check {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 4px;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 0.75rem;
+  color: var(--carbon-2);
 }
 
-/* — Cross-sell strip (below the bill) — */
-.cross-sell {
-  margin-top: 6px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--grid);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.cross-sell-label {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--faded);
-  font-weight: 600;
-}
-.cross-sell-list {
-  list-style: none;
-  margin: 0;
-  padding: 0 0 4px;
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--grid) transparent;
-}
-.cross-sell-list .product-card {
-  flex: 0 0 128px;
-  width: 128px;
-}
-.cross-sell-list .product-name {
-  font-size: 12px;
-}
-.cross-sell-list .product-price {
-  font-size: 12px;
+.pay-check::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--paid);
+  flex-shrink: 0;
+  transform: translateY(-2px);
 }
 
-.product-price {
-  font-family: "JetBrains Mono", monospace;
-  font-weight: 700;
-  font-size: 13.5px;
+.pay-check.is-block::before {
+  background: var(--block);
 }
 
-.product-add-btn {
-  background: var(--cobalt);
-  color: white;
-  border: 1px solid var(--cobalt);
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-weight: 600;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 120ms, transform 120ms;
+.pay-check.is-block {
+  color: #7A3906;
+  font-weight: 500;
 }
 
-.product-add-btn:hover {
-  background: var(--cobalt-press);
+.pay-btn {
+  width: 100%;
+  justify-content: center;
+  background: var(--carbon);
+  border-color: var(--carbon);
+  color: var(--paper);
+  padding: 10px 14px;
+  font-size: 0.875rem;
 }
 
-.product-add-btn:active {
-  transform: translateY(1px);
+.pay-btn:hover:not(:disabled) {
+  background: #14110C;
 }
 
-.product-add-btn:disabled {
-  background: var(--grid);
-  border-color: var(--grid);
-  color: var(--faded);
-  cursor: not-allowed;
-}
-
-/* — Bill Timeline (friendly audit view) — */
-.bill-timeline {
+.pay-pending {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--block);
+  border-radius: var(--r2);
+  background: var(--block-wash);
 }
 
-.bill-timeline-head {
+.pay-pending-text {
+  font-size: 0.75rem;
+  color: #7A3906;
+  line-height: 1.5;
+}
+
+.pay-pending-text strong {
+  font-weight: 600;
+}
+
+/* — PAID. The single flourish on the page, and it only lands when Razorpay
+     has actually confirmed the money moved. — */
+.bill-paid {
+  padding: 14px;
+  border-top: 1px solid var(--paper-rule);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  gap: 12px;
+  font-family: var(--sans);
 }
 
-.bill-timeline-head h2 {
-  font-family: "Syne", sans-serif;
-  font-size: 12px;
-  letter-spacing: 0.09em;
+.stamp {
+  font-family: var(--display);
+  font-stretch: 125%;
+  font-weight: 800;
+  font-size: 0.9375rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  font-weight: 700;
-  margin: 0;
-}
-
-.bill-toggle {
-  background: var(--paper);
-  border: 1px solid var(--grid);
-  border-radius: 999px;
-  color: var(--faded);
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-weight: 600;
+  color: var(--paid);
+  border: 2px solid var(--paid);
+  border-radius: var(--r1);
   padding: 5px 10px;
+  transform: rotate(-4deg);
+  flex-shrink: 0;
+  animation: stamp-in 220ms cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+
+@keyframes stamp-in {
+  from {
+    transform: rotate(-14deg) scale(1.5);
+    opacity: 0;
+  }
+
+  to {
+    transform: rotate(-4deg) scale(1);
+    opacity: 1;
+  }
+}
+
+.paid-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.paid-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--carbon);
+}
+
+.paid-order {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--carbon-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* — Optional email, kept out of the way until it matters — */
+.bill-email {
+  padding: 11px 14px 13px;
+  border-top: 1px dashed var(--paper-rule);
+  font-family: var(--sans);
+}
+
+.bill-email summary {
+  font-size: 0.75rem;
+  color: var(--carbon-2);
   cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 120ms, color 120ms;
-}
-
-.bill-toggle:hover {
-  border-color: var(--grid-strong);
-  color: var(--ink);
-}
-
-/* Raw view: overlay the toggle onto AuditTrail's own header instead of
-   duplicating a second header bar above it. */
-.bill-timeline-raw {
-  position: relative;
-}
-
-.bill-timeline-raw>.bill-toggle {
-  position: absolute;
-  top: 10px;
-  right: 14px;
-  z-index: 1;
-}
-
-.bill-timeline-empty {
-  margin: 0;
-  padding: 18px 16px;
-  color: var(--faded);
-  font-size: 13px;
-  text-align: center;
-  background: repeating-linear-gradient(0deg, transparent 0 22px, rgba(201, 210, 227, 0.35) 22px 23px);
-  min-height: 120px;
-  display: grid;
-  place-content: center;
-}
-
-.bill-timeline-list {
   list-style: none;
-  margin: 0;
-  padding: 8px 10px 12px;
+}
+
+.bill-email summary::-webkit-details-marker {
+  display: none;
+}
+
+.bill-email summary::before {
+  content: "+ ";
+  font-weight: 600;
+}
+
+.bill-email[open] summary::before {
+  content: "− ";
+}
+
+.bill-email-body {
+  margin-top: 9px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 64vh;
+}
+
+.bill-email-note {
+  font-size: 0.6875rem;
+  color: var(--carbon-2);
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Activity — what the counter did, in order
+   ========================================================================== */
+
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+  max-height: 44vh;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--grid) transparent;
-  background:
-    linear-gradient(var(--panel), var(--panel)) padding-box,
-    repeating-linear-gradient(0deg, transparent 0 28px, rgba(201, 210, 227, 0.18) 28px 29px) border-box;
 }
 
-.bill-entry {
-  display: flex;
+.log-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 9px;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  font-size: 12.5px;
+  padding: 6px 14px;
+  font-size: 0.8125rem;
 }
 
-.bill-entry-text {
+.log-row+.log-row {
+  border-top: 1px solid color-mix(in srgb, var(--rule) 55%, transparent);
+}
+
+.log-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--rule-strong);
+  transform: translateY(-2px);
+}
+
+.log-row.is-success .log-dot {
+  background: var(--paid);
+}
+
+.log-row.is-info .log-dot {
+  background: var(--live);
+}
+
+.log-row.is-warn .log-dot {
+  background: var(--block);
+}
+
+.log-row.is-error .log-dot {
+  background: var(--error);
+}
+
+.log-text {
+  color: var(--ink-2);
+  word-break: break-word;
+}
+
+.log-row.is-warn .log-text,
+.log-row.is-error .log-text {
   color: var(--ink);
 }
 
-.bill-entry-time {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  color: var(--faded);
+.log-time {
+  font-size: 0.6875rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Raw machine output. Monospace is correct here — it IS machine text. */
+.raw-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 44vh;
+  overflow-y: auto;
+}
+
+.raw-row {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-strong);
+  border-radius: var(--r1);
+  padding: 7px 9px;
+  background: var(--surface);
+}
+
+.raw-row.is-ok {
+  border-left-color: var(--live);
+}
+
+.raw-row.is-error {
+  border-left-color: var(--error);
+}
+
+.raw-row.is-blocked {
+  border-left-color: var(--block);
+}
+
+.raw-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.raw-badge {
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--r1);
+  border: 1px solid transparent;
+}
+
+.raw-badge.is-ok {
+  background: var(--live-wash);
+  color: var(--live-deep);
+  border-color: color-mix(in srgb, var(--live) 35%, transparent);
+}
+
+.raw-badge.is-error {
+  background: var(--error-wash);
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 35%, transparent);
+}
+
+.raw-badge.is-blocked {
+  background: var(--block-wash);
+  color: #7A3906;
+  border-color: color-mix(in srgb, var(--block) 35%, transparent);
+}
+
+.raw-ep {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.raw-ms {
+  margin-left: auto;
+  font-size: 0.625rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.raw-row summary {
+  margin-top: 5px;
+  font-size: 0.6875rem;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.raw-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.raw-row summary::before {
+  content: "▸ ";
+}
+
+.raw-row[open] summary::before {
+  content: "▾ ";
+}
+
+.raw-pre {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r1);
+  padding: 7px;
+  margin: 6px 0 0;
+  overflow-x: auto;
+  color: var(--ink-2);
+}
+
+/* ==========================================================================
+   Notices — replaces native alert(). Says what happened and what to do.
+   ========================================================================== */
+
+.notes {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 40px));
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--ink);
+  border-radius: var(--r2);
+  box-shadow: var(--shadow-2);
+  padding: 10px 11px;
+  font-size: 0.8125rem;
+  animation: note-in 160ms ease-out both;
+}
+
+@keyframes note-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.note.is-warn {
+  border-left-color: var(--block);
+  background: var(--block-wash);
+}
+
+.note.is-error {
+  border-left-color: var(--error);
+  background: var(--error-wash);
+}
+
+.note.is-ok {
+  border-left-color: var(--paid);
+  background: var(--paid-wash);
+}
+
+.note-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+.note-close {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 1rem;
+  line-height: 1;
   flex-shrink: 0;
 }
 
-.bill-entry.bill-success {
-  border-left: 3px solid var(--mint);
+.note-close:hover {
+  color: var(--ink);
 }
 
-.bill-entry.bill-info {
-  border-left: 3px solid var(--cobalt);
+/* ==========================================================================
+   Narrow screens — structural collapse, not fluid type
+   ========================================================================== */
+
+.tabs {
+  display: none;
 }
 
-.bill-entry.bill-warn {
-  border-left: 3px solid #C9A227;
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 12px;
+  }
+
+  .rail {
+    position: static;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--counter-deep);
+    border-radius: var(--r2);
+    margin-bottom: 2px;
+  }
+
+  .tab {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    border-radius: var(--r1);
+    padding: 7px 10px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: background var(--t), color var(--t);
+  }
+
+  .tab.is-on {
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: var(--shadow-1);
+  }
+
+  /* The mic stays mounted and audible in both views — only the panels swap. */
+  .workspace[data-view="bill"] .work-panels {
+    display: none;
+  }
+
+  .workspace[data-view="shop"] .rail {
+    display: none;
+  }
+
+  .topbar-inner {
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
+
+  .topbar-facts {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .shelf-search {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .shelf-search .input {
+    width: auto;
+    flex: 1;
+  }
+
+  .notes {
+    right: 12px;
+    left: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
 }
 
-.bill-entry.bill-error {
-  border-left: 3px solid var(--vermilion);
+@media (max-width: 560px) {
+  .shelf-grid {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  }
+
+  .tape-turn {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
+
+  .tape-who {
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  /* The meter is a data readout, not decoration — it keeps responding, it
+     just stops easing between values. */
+  .meter-bar {
+    transition: none;
+  }
 }

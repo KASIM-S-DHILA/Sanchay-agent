@@ -1,28 +1,27 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { BillTimeline } from "./components/BillTimeline";
-import { CatalogPanel } from "./components/CatalogPanel";
+import { ActivityLog } from "./components/ActivityLog";
+import { Bill, type BillItem, type PaymentState } from "./components/Bill";
 import { CrossSell, type CrossSellSuggestion } from "./components/CrossSell";
+import { Shelf, type ShelfSource } from "./components/Shelf";
+import type { CatalogProduct } from "./components/ProductCard";
+import { VoiceDock } from "./components/VoiceDock";
+import { useAuditFeed } from "./hooks/useAuditFeed";
 import { useVoiceCall } from "./hooks/useVoiceCall";
-
-// Test-mode Razorpay key — key ids are public (embedded in checkout flows)
-const RAZORPAY_KEY_ID = "rzp_test_TTAxFYmg1Iipgl";
-
-interface CartItem {
-  productId: string;
-  name: string;
-  price: number;
-  quantity: number;
-}
+import { RAZORPAY_KEY_ID, rupees } from "./config";
 
 interface CartData {
-  items: CartItem[];
+  items: BillItem[];
   total: number;
   count: number;
   budgetRemaining?: number | null;
   youMightAlsoLike?: CrossSellSuggestion[];
 }
 
-const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
+interface Note {
+  id: number;
+  tone: "ok" | "warn" | "error";
+  text: string;
+}
 
 declare global {
   interface Window {
@@ -30,85 +29,220 @@ declare global {
   }
 }
 
+/** The catalog returns `id` when listing and `productId` when searching. */
+function normalizeProducts(raw: any[]): CatalogProduct[] {
+  return raw.map((p) => ({
+    id: p.id ?? p.productId,
+    name: p.name,
+    price: p.price,
+    price_display: p.price_display,
+    category: p.category,
+    stock: typeof p.stock === "number" ? p.stock : 1,
+    image_url: p.image_url ?? null,
+    description: p.description,
+  }));
+}
+
 export default function App() {
   const [email, setEmail] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartData | null>(null);
-  const [starting, setStarting] = useState(false);
-  const openedOrdersRef = useRef<Set<string>>(new Set());
-  const [lastOrder, setLastOrder] = useState<{ orderId: string; status: string } | null>(null);
-  const [addingProductId, setAddingProductId] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [view, setView] = useState<"shop" | "bill">("shop");
 
-  const api = useCallback(
-    async (path: string, init?: RequestInit) => {
-      const res = await fetch(path, {
-        ...init,
-        headers: {
-          "Content-Type": "application/json",
-          ...(sessionId ? { "x-session-id": sessionId } : {}),
-          ...(init?.headers ?? {}),
-        },
-      });
-      return res.json();
+  const [shelfQuery, setShelfQuery] = useState("");
+  const [shelfSource, setShelfSource] = useState<ShelfSource>("default");
+  const [shelfProducts, setShelfProducts] = useState<CatalogProduct[]>([]);
+  const [shelfLoading, setShelfLoading] = useState(true);
+  const [shelfError, setShelfError] = useState<string | null>(null);
+
+  const [addingProductId, setAddingProductId] = useState<string | null>(null);
+  const [justAddedId, setJustAddedId] = useState<string | null>(null);
+  const [payment, setPayment] = useState<PaymentState | null>(null);
+  const [checkoutBusy, setCheckoutBusy] = useState(false);
+
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = sessionId;
+  const noteSeq = useRef(0);
+  const handledEventsRef = useRef<Set<string>>(new Set());
+  // Queries this browser issued, so a catalog lookup we caused isn't mistaken
+  // for one the agent caused when it comes back around on the audit feed.
+  const ownQueriesRef = useRef<Map<string, number>>(new Map());
+  const justAddedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const note = useCallback((text: string, tone: Note["tone"] = "warn") => {
+    const id = ++noteSeq.current;
+    setNotes((prev) => [...prev.slice(-2), { id, tone, text }]);
+    setTimeout(() => setNotes((prev) => prev.filter((n) => n.id !== id)), 9000);
+  }, []);
+
+  const dismissNote = (id: number) => setNotes((prev) => prev.filter((n) => n.id !== id));
+
+  const api = useCallback(async (path: string, init?: RequestInit) => {
+    const sid = sessionIdRef.current;
+    const res = await fetch(path, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(sid ? { "x-session-id": sid } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+    return res.json() as Promise<any>;
+  }, []);
+
+  // — Session ————————————————————————————————————————————————————————
+  // One entry point. Anything that needs a counter opens one rather than
+  // telling the shopper to go and press a different button first.
+  const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    const data = await api("/api/session/start", {
+      method: "POST",
+      body: JSON.stringify({ user_email: email.trim() || null }),
+    });
+    if (data?.success) {
+      sessionIdRef.current = data.data.sessionId;
+      setSessionId(data.data.sessionId);
+      return data.data.sessionId;
+    }
+    note(data?.error ?? "Couldn't open a counter. Reload and try again.", "error");
+    return null;
+  }, [api, email, note]);
+
+  // — Shelf ——————————————————————————————————————————————————————————
+  const searchShelf = useCallback(
+    async (query: string) => {
+      setShelfLoading(true);
+      setShelfError(null);
+      ownQueriesRef.current.set(query, Date.now());
+      try {
+        const data = await api(`/api/catalog?q=${encodeURIComponent(query)}`);
+        if (data?.success) {
+          setShelfProducts(normalizeProducts(data.data?.products ?? []));
+          setShelfQuery(query);
+          setShelfSource(query ? "you" : "default");
+        } else {
+          setShelfError(data?.error ?? "The shelf didn't load");
+        }
+      } catch {
+        setShelfError("The shelf didn't load");
+      } finally {
+        setShelfLoading(false);
+      }
     },
-    [sessionId],
+    [api],
   );
 
-  const startSession = async (): Promise<string | null> => {
-    setStarting(true);
-    try {
-      const data: any = await api("/api/session/start", {
-        method: "POST",
-        body: JSON.stringify({ user_email: email.trim() || null }),
-      });
-      if (data.success) {
-        setSessionId(data.data.sessionId);
-        return data.data.sessionId;
-      }
-      alert(data.error ?? "Failed to start session");
-      return null;
-    } finally {
-      setStarting(false);
-    }
-  };
+  useEffect(() => {
+    void searchShelf("");
+    // Initial load only — later loads are user- or agent-driven.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Razorpay modal trigger
+  // — Cart ———————————————————————————————————————————————————————————
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    const load = async () => {
+      const data = await api("/api/cart");
+      if (!cancelled && data?.success) setCart(data.data);
+    };
+    void load();
+    const timer = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [sessionId, api]);
+
+  const refreshCart = useCallback(async () => {
+    const data = await api("/api/cart");
+    if (data?.success) setCart(data.data);
+  }, [api]);
+
+  // — Payment ————————————————————————————————————————————————————————
+  /** Razorpay's handler fires the moment the shopper finishes, but the order
+   *  isn't `paid` until our webhook lands. Poll briefly rather than either
+   *  claiming success early or leaving the bill in limbo. */
+  const confirmPayment = useCallback(
+    async (orderId: string) => {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const data = await api(`/api/order/${orderId}`);
+        if (data?.success && data.data?.status === "paid") {
+          setPayment({ orderId, amount: data.data.amount ?? 0, stage: "paid" });
+          void refreshCart();
+          note("Payment confirmed. The bill is settled.", "ok");
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      note(
+        "Payment went through but confirmation is still coming back. The bill updates itself the moment it lands.",
+        "warn",
+      );
+    },
+    [api, note, refreshCart],
+  );
+
   const openRazorpay = useCallback(
     (orderId: string, amountPaise: number) => {
-      if (!window.Razorpay || !sessionId) return;
+      if (!window.Razorpay) {
+        note("The payment window couldn't load. Check your connection and try again.", "error");
+        return;
+      }
+      setPayment({ orderId, amount: amountPaise, stage: "pending" });
       const rzp = new window.Razorpay({
         key: RAZORPAY_KEY_ID,
         order_id: orderId,
         amount: amountPaise,
         currency: "INR",
         name: "Sanchay",
-        handler: async () => {
-          const res = await fetch(`/api/order/${orderId}`, {
-            headers: { "x-session-id": sessionId },
-          });
-          const out: any = await res.json();
-          if (out.success) setLastOrder({ orderId, status: out.data.status });
+        description: "Voice counter bill",
+        handler: () => {
+          void confirmPayment(orderId);
+        },
+        modal: {
+          // Closing the window is a normal thing to do, not an error. Say what
+          // it means and leave a way back in.
+          ondismiss: () => {
+            setPayment((prev) =>
+              prev && prev.orderId === orderId && prev.stage !== "paid"
+                ? { ...prev, stage: "dismissed" }
+                : prev,
+            );
+            note("Payment window closed. Nothing was charged — your bill is exactly as it was.", "warn");
+          },
         },
       });
       rzp.open();
     },
-    [sessionId],
+    [confirmPayment, note],
   );
 
-  // Cart polling @3s
-  useEffect(() => {
-    if (!sessionId) return;
-    let cancelled = false;
-    const load = async () => {
-      const data: any = await api("/api/cart");
-      if (!cancelled && data.success) setCart(data.data);
-    };
-    load();
-    const timer = setInterval(load, 3000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [sessionId, api]);
+  const resumePayment = useCallback(() => {
+    if (payment && payment.stage !== "paid") openRazorpay(payment.orderId, payment.amount);
+  }, [payment, openRazorpay]);
 
-  // Voice call hook
+  const handlePay = useCallback(async () => {
+    const sid = await ensureSession();
+    if (!sid) return;
+    setCheckoutBusy(true);
+    try {
+      const data = await api("/api/checkout", { method: "POST" });
+      if (data?.success && data.data?.orderId) {
+        openRazorpay(data.data.orderId, data.data.amount);
+      } else {
+        // Every gate the Worker enforces — cap, stock, merchant ceiling —
+        // arrives here as a sentence. Show it verbatim.
+        note(data?.error ?? "Checkout didn't go through.", "warn");
+        void refreshCart();
+      }
+    } finally {
+      setCheckoutBusy(false);
+    }
+  }, [api, ensureSession, note, openRazorpay, refreshCart]);
+
+  // — Voice ——————————————————————————————————————————————————————————
   const voice = useVoiceCall(openRazorpay);
 
   // The bridge only mints a new session if ours was missing/expired — when
@@ -116,196 +250,230 @@ export default function App() {
   // in sync with whatever session the voice call is actually using.
   useEffect(() => {
     if (voice.sessionId && voice.sessionId !== sessionId) {
+      sessionIdRef.current = voice.sessionId;
       setSessionId(voice.sessionId);
     }
   }, [voice.sessionId, sessionId]);
 
-  // Start session automatically when voice call needs it, and always hand
-  // the resolved session id to the voice bridge so it reuses this session
-  // instead of creating a disconnected one.
-  const startAndCall = async () => {
-    const activeSessionId = sessionId ?? (await startSession());
-    if (!activeSessionId) return;
-    voice.startCall(activeSessionId, email.trim() || undefined);
-  };
+  const startTalking = useCallback(async () => {
+    const sid = await ensureSession();
+    if (!sid) return;
+    void voice.startCall(sid, email.trim() || undefined);
+  }, [ensureSession, email, voice]);
 
-  // Manual "Add" from the catalog panel — same endpoint the voice tools use,
-  // so it goes through the same stock/budget checks and audit logging.
-  const handleAddToCart = async (productId: string) => {
-    if (!sessionId) {
-      alert("Open the counter first — enter an email (optional) and click \"Open counter\".");
-      return;
-    }
-    setAddingProductId(productId);
-    try {
-      const data: any = await api("/api/cart/add", {
+  // — Adding ——————————————————————————————————————————————————————————
+  const handleAddToCart = useCallback(
+    async (productId: string) => {
+      const sid = await ensureSession();
+      if (!sid) return;
+      setAddingProductId(productId);
+      try {
+        const data = await api("/api/cart/add", {
+          method: "POST",
+          body: JSON.stringify({ product_id: productId, quantity: 1 }),
+        });
+        if (data?.success) {
+          setCart(data.data);
+          setJustAddedId(productId);
+          if (justAddedTimerRef.current) clearTimeout(justAddedTimerRef.current);
+          justAddedTimerRef.current = setTimeout(() => setJustAddedId(null), 2600);
+        } else {
+          note(data?.error ?? "Couldn't add that to the bill.", "warn");
+        }
+      } finally {
+        setAddingProductId(null);
+      }
+    },
+    [api, ensureSession, note],
+  );
+
+  const handleSetBudget = useCallback(
+    async (rupeeValue: number): Promise<boolean> => {
+      const sid = await ensureSession();
+      if (!sid) return false;
+      const data = await api("/api/session/budget", {
         method: "POST",
-        body: JSON.stringify({ product_id: productId, quantity: 1 }),
+        body: JSON.stringify({ budget: rupeeValue }),
       });
-      if (data.success) setCart(data.data);
-      else alert(data.error ?? "Could not add item");
-    } finally {
-      setAddingProductId(null);
+      if (data?.success) {
+        note(`Cap set at ${rupees(data.data.budget)}. Nothing can push the bill past it.`, "ok");
+        void refreshCart();
+        return true;
+      }
+      note(data?.error ?? "Couldn't set that cap.", "warn");
+      return false;
+    },
+    [api, ensureSession, note, refreshCart],
+  );
+
+  // — Audit feed: one poller, several consumers ————————————————————————
+  const { events } = useAuditFeed(sessionId);
+
+  useEffect(() => {
+    for (const e of events) {
+      if (handledEventsRef.current.has(e.id)) continue;
+      handledEventsRef.current.add(e.id);
+
+      const body: any = e.response ?? {};
+      const data = body.data ?? body;
+
+      // Checkout the agent started on our behalf — open the payment window.
+      if (e.endpoint === "/api/checkout" && e.status === "ok" && data?.orderId && data?.amount) {
+        setPayment((prev) => {
+          if (prev && prev.orderId === data.orderId) return prev; // already handling this one
+          openRazorpay(data.orderId, data.amount);
+          return { orderId: data.orderId, amount: data.amount, stage: "pending" };
+        });
+        continue;
+      }
+
+      // A catalog lookup the AGENT ran — mirror it onto the shelf so the
+      // screen answers the same question the shopper just asked out loud.
+      if (e.endpoint === "/api/catalog" && e.status === "ok" && Array.isArray(data?.products)) {
+        const query: string = typeof data.query === "string" ? data.query : "";
+        const ourAt = ownQueriesRef.current.get(query);
+        if (ourAt && Date.now() - ourAt < 10000) continue; // this one was ours
+        setShelfProducts(normalizeProducts(data.products));
+        setShelfQuery(query);
+        setShelfSource("agent");
+        setShelfLoading(false);
+        setShelfError(null);
+      }
     }
-  };
+  }, [events, openRazorpay]);
+
+  const items = cart?.items ?? [];
+  const total = cart?.total ?? 0;
+  const count = cart?.count ?? 0;
+  const budgetRemaining = cart?.budgetRemaining ?? null;
+  const cap = budgetRemaining === null ? null : total + budgetRemaining;
 
   return (
-    <div className="app">
-      <header className="header">
-        <div className="brand">
-          <div className="brand-top">
-            <h1>Sanchay<span> — Voice Counter</span></h1>
-            <span className="eyebrow">Est. bazaar ledger • audited</span>
+    <div className="counter">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="mark">
+            <h1 className="mark-name">Sanchay</h1>
+            <span className="mark-role">the counter that listens</span>
           </div>
-          <p className="subtitle">Speak to fill a bill. Every add, remove and checkout is measured, bounded and stamped — watch your receipt build live.</p>
-        </div>
-        <div className="header-actions">
-          {!sessionId ? (
-            <div className="session-start">
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="your@email.com — optional, for history"
-                className="buyer-input"
-                aria-label="Email for session"
-              />
-              <button onClick={startSession} disabled={starting} className="send-btn">
-                {starting ? "Starting…" : "Open counter"}
-              </button>
+          <div className="topbar-facts">
+            <div className="fact">
+              <span className="fact-label">Counter</span>
+              <span className="fact-value">
+                {sessionId ? sessionId.slice(0, 6).toUpperCase() : "not open"}
+              </span>
             </div>
-          ) : (
-            <div className="meta">
-              <span className="badge badge-ok">counter open</span>
-              <code className="session-id">#{sessionId.slice(0, 8).toUpperCase()}</code>
-              {email && <span className="meta-email">{email}</span>}
+            <div className="fact">
+              <span className="fact-label">On the bill</span>
+              <span className="fact-value">
+                {count} {count === 1 ? "piece" : "pieces"} · {rupees(total)}
+              </span>
             </div>
-          )}
-          {sessionId && <span className="eyebrow" style={{ alignSelf: "flex-end" }}>{cart ? `${cart.count} items • ${rupees(cart.total)}` : "0 items"} • live bill</span>}
+            <div className="fact">
+              <span className="fact-label">Cap</span>
+              <span className={`fact-value ${cap !== null && budgetRemaining === 0 ? "is-over" : ""}`}>
+                {cap === null ? "none set" : `${rupees(budgetRemaining ?? 0)} left`}
+              </span>
+            </div>
+          </div>
         </div>
       </header>
 
-      <div className="layout">
-        {/* Left: tape */}
-        <section className="chat-panel">
-          <div className="voice-container">
-            <div className="voice-head">
-              <h2>Counter tape</h2>
-              <span className="ledger-no">Tape {sessionId ? sessionId.slice(0, 4).toUpperCase() : "— — —"} • 16 kHz</span>
-            </div>
+      <main className="workspace" data-view={view}>
+        <div className="work">
+          <VoiceDock
+            callState={voice.callState}
+            transcripts={voice.transcripts}
+            error={voice.error}
+            micLevel={voice.micLevel}
+            agentLevel={voice.agentLevel}
+            onStart={() => void startTalking()}
+            onStop={voice.stopCall}
+            onDismissError={voice.dismissError}
+            onTry={(q) => void searchShelf(q)}
+          />
 
-            {!sessionId ? (
-              <p className="voice-hint">Open the counter to enable the mic. Try: <strong>“show me hoodies”</strong> → <strong>“add the gray one”</strong> → <strong>“checkout”</strong>.</p>
-            ) : (
-              <div className="voice-controls">
-                {voice.callState === "idle" && (
-                  <button onClick={() => startAndCall()} className="voice-btn">
-                    <span aria-hidden>⬢</span> Start voice call
-                  </button>
-                )}
-                {voice.callState === "connecting" && (
-                  <button disabled className="voice-btn connecting">
-                    Connecting tape…
-                  </button>
-                )}
-                {voice.callState === "listening" && (
-                  <div className="voice-status listening">
-                    <span className="tape-meter" aria-hidden />
-                    Listening — speak now
-                    <button onClick={voice.stopCall} className="stop-btn">End</button>
-                  </div>
-                )}
-                {voice.callState === "speaking" && (
-                  <div className="voice-status speaking">
-                    <span className="tape-meter" aria-hidden />
-                    Sanchay replying…
-                    <button onClick={voice.stopCall} className="stop-btn">End</button>
-                  </div>
-                )}
-                {voice.error && <p className="voice-error" role="alert">{voice.error}</p>}
-
-                {voice.transcripts.length > 0 ? (
-                  <div className="transcripts" aria-live="polite">
-                    {voice.transcripts.map((t, i) => (
-                      <div key={i} className={`transcript ${t.role}`}>
-                        {t.text}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="voice-hint">
-                    {voice.callState === "idle" ? "Press Start voice call and allow the mic — the tape will type your words and Sanchay’s replies." : "Tape is empty. Say “show me hoodies” to begin."}
-                  </p>
-                )}
-              </div>
-            )}
+          {/* Narrow screens only (see styles.css). Plain toggle buttons rather
+              than a role="tab" set — a half-wired tab pattern reads worse to a
+              screen reader than an honest pair of buttons. */}
+          <div className="tabs">
+            <button
+              type="button"
+              className={`tab ${view === "shop" ? "is-on" : ""}`}
+              aria-pressed={view === "shop"}
+              onClick={() => setView("shop")}
+            >
+              Shelf
+            </button>
+            <button
+              type="button"
+              className={`tab ${view === "bill" ? "is-on" : ""}`}
+              aria-pressed={view === "bill"}
+              onClick={() => setView("bill")}
+            >
+              Bill {count > 0 && `· ${rupees(total)}`}
+            </button>
           </div>
 
-          <div className="cart-display">
-            <div className="cart-head">
-              <h2>Bill — live</h2>
-              <span className="cart-meta">{cart ? `${cart.count} pcs` : "0 pcs"} • carbon copy</span>
-            </div>
-            {!cart || cart.items.length === 0 ? (
-              <div className="cart-empty">
-                Cart is empty. <strong>Say “show me hoodies”</strong> or “add the black tee” — line items appear here as you speak.
-              </div>
-            ) : (
-              <>
-                <ul className="cart-list">
-                  {cart.items.map((item) => (
-                    <li key={item.productId} className="cart-row">
-                      <span className="cart-name">
-                        <span className="cart-qty">{item.quantity}×</span> {item.name}
-                      </span>
-                      <span className="cart-price">{rupees(item.price * item.quantity)}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="cart-total">
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", opacity: 0.8 }}>Total payable</span>
-                  <span>
-                    <strong>{rupees(cart.total)}</strong>
-                    {typeof cart.budgetRemaining === "number" && (
-                      <span className="budget-left"> · left {rupees(cart.budgetRemaining)}</span>
-                    )}
-                  </span>
-                </div>
-              </>
-            )}
-            {lastOrder ? (
-              <div className="order-status">
-                <span className="stamp">Paid — {lastOrder.status}</span>
-                <code>{lastOrder.orderId.slice(0, 18)}…</code>
-              </div>
-            ) : (
-              cart && cart.items.length > 0 && <span className="cart-meta">Say “checkout” when ready — Razorpay will open.</span>
-            )}
-
-            <CrossSell
-              suggestions={cart?.youMightAlsoLike ?? []}
-              onAdd={handleAddToCart}
+          <div className="work-panels">
+            <Shelf
+              query={shelfQuery}
+              source={shelfSource}
+              products={shelfProducts}
+              loading={shelfLoading}
+              error={shelfError}
+              onSearch={(q) => void searchShelf(q)}
+              onAdd={(id) => void handleAddToCart(id)}
               addingId={addingProductId}
+              justAddedId={justAddedId}
             />
+            {items.length > 0 && (
+              <CrossSell
+                suggestions={cart?.youMightAlsoLike ?? []}
+                onAdd={(id) => void handleAddToCart(id)}
+                addingId={addingProductId}
+                justAddedId={justAddedId}
+              />
+            )}
           </div>
-        </section>
+        </div>
 
-        {/* Right: receipt ledger */}
-        {sessionId && (
-          <aside className="audit-panel">
-            <BillTimeline sessionId={sessionId} onEvent={(e) => {
-              if (e.endpoint !== "/api/checkout" || e.status !== "ok") return;
-              const resp: any = e.response ?? {};
-              const d = resp.data ?? resp;
-              if (!d.orderId || !d.amount || openedOrdersRef.current.has(d.orderId)) return;
-              openedOrdersRef.current.add(d.orderId);
-              setLastOrder({ orderId: d.orderId, status: d.status });
-              openRazorpay(d.orderId, d.amount);
-            }} />
-          </aside>
-        )}
-      </div>
+        <aside className="rail">
+          <Bill
+            sessionId={sessionId}
+            items={items}
+            total={total}
+            count={count}
+            budgetRemaining={budgetRemaining}
+            payment={payment}
+            busy={checkoutBusy}
+            email={email}
+            onEmailChange={setEmail}
+            onSetBudget={handleSetBudget}
+            onPay={() => void handlePay()}
+            onResumePayment={resumePayment}
+          />
+          {sessionId && <ActivityLog events={events} />}
+        </aside>
+      </main>
 
-      <CatalogPanel onAdd={handleAddToCart} addingId={addingProductId} />
+      {notes.length > 0 && (
+        <div className="notes" aria-live="polite">
+          {notes.map((n) => (
+            <div key={n.id} className={`note is-${n.tone}`} role={n.tone === "error" ? "alert" : undefined}>
+              <span className="note-text">{n.text}</span>
+              <button
+                type="button"
+                className="note-close"
+                onClick={() => dismissNote(n.id)}
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

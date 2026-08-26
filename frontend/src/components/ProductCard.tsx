@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { rupees } from "../config";
 
 export interface CatalogProduct {
   id: string;
@@ -30,45 +31,49 @@ function safeImageUrl(url?: string | null): string {
   }
 }
 
-const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
-
 export function ProductCard({
   product,
   onAdd,
   adding,
+  justAdded,
 }: {
   product: CatalogProduct;
   onAdd: (productId: string) => void;
   adding: boolean;
+  justAdded?: boolean;
 }) {
   const [imgSrc, setImgSrc] = useState(() => safeImageUrl(product.image_url));
   const outOfStock = product.stock <= 0;
 
   return (
-    <li className="product-card">
-      <div className="product-image-wrap">
+    <li className={`card ${outOfStock ? "is-out" : ""}`}>
+      <div className="card-media">
         <img
           src={imgSrc}
           alt={product.name}
-          className="product-image"
+          className="card-img"
           loading="lazy"
           onError={() => setImgSrc(PLACEHOLDER_IMAGE)}
         />
-        {outOfStock && <span className="product-oos">Out of stock</span>}
+        {outOfStock && <span className="card-tag">Sold out</span>}
       </div>
-      <div className="product-info">
-        {product.category && <span className="product-category">{product.category}</span>}
-        <h3 className="product-name">{product.name}</h3>
-        <div className="product-row">
-          <span className="product-price">{product.price_display ?? rupees(product.price)}</span>
-          <button
-            type="button"
-            className="product-add-btn"
-            onClick={() => onAdd(product.id)}
-            disabled={outOfStock || adding}
-          >
-            {adding ? "Adding…" : outOfStock ? "Sold out" : "Add"}
-          </button>
+      <div className="card-body">
+        {product.category && <span className="card-cat">{product.category}</span>}
+        <h3 className="card-name">{product.name}</h3>
+        <div className="card-foot">
+          <span className="card-price">{product.price_display ?? rupees(product.price)}</span>
+          {justAdded ? (
+            <span className="card-added">On the bill</span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => onAdd(product.id)}
+              disabled={outOfStock || adding}
+            >
+              {adding ? "Adding" : outOfStock ? "Sold out" : "Add"}
+            </button>
+          )}
         </div>
       </div>
     </li>

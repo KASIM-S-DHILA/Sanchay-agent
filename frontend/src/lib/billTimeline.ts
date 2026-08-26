@@ -1,6 +1,7 @@
 /**
- * Translates raw api_call_log audit events into shopper-friendly "Bill
- * Timeline" entries. Judges get the raw log (AuditTrail); shoppers get this.
+ * Translates raw api_call_log audit events into shopper-friendly activity
+ * lines. Anyone who wants proof can flip ActivityLog to the raw call log;
+ * this is the reading for everyone else.
  *
  * Kept deliberately dumb — no state, pure function of one event — so it's
  * easy to verify against real audit rows and easy to extend per endpoint.
@@ -47,14 +48,25 @@ export function toTimelineEntry(e: AuditEvent): TimelineEntry | null {
 
   switch (e.endpoint) {
     case "/api/cart":
-      if (e.method === "GET") return null; // background poll, not a shopper action
-      break;
+      // Reading the cart is never a shopper action, whichever caller does it:
+      // the browser polls this every 3s and Sarvam's tools call it as POST
+      // (their tools are all-POST), so both would otherwise flood the log and
+      // bury the events that actually moved money. Cart *changes* are logged
+      // under /api/cart/add and /api/cart/remove instead.
+      return null;
 
     case "/api/session/start":
       return { id: e.id, ts: e.ts, tone: "info", text: "Counter opened" };
 
     case "/api/session/end":
       return { id: e.id, ts: e.ts, tone: "info", text: "Counter closed" };
+
+    case "/api/session/budget": {
+      if (failed) {
+        return { id: e.id, ts: e.ts, tone: "warn", text: `Cap not set — ${errorText}` };
+      }
+      return { id: e.id, ts: e.ts, tone: "info", text: `Spending cap set to ${rupees(data.budget)}` };
+    }
 
     case "/api/catalog": {
       const count = Array.isArray(data.products) ? data.products.length : 0;
