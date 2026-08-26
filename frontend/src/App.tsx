@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { AuditTrail } from "./components/AuditTrail";
+import { BillTimeline } from "./components/BillTimeline";
+import { CatalogPanel } from "./components/CatalogPanel";
+import { CrossSell, type CrossSellSuggestion } from "./components/CrossSell";
 import { useVoiceCall } from "./hooks/useVoiceCall";
 
 // Test-mode Razorpay key — key ids are public (embedded in checkout flows)
@@ -17,6 +19,7 @@ interface CartData {
   total: number;
   count: number;
   budgetRemaining?: number | null;
+  youMightAlsoLike?: CrossSellSuggestion[];
 }
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
@@ -34,6 +37,7 @@ export default function App() {
   const [starting, setStarting] = useState(false);
   const openedOrdersRef = useRef<Set<string>>(new Set());
   const [lastOrder, setLastOrder] = useState<{ orderId: string; status: string } | null>(null);
+  const [addingProductId, setAddingProductId] = useState<string | null>(null);
 
   const api = useCallback(
     async (path: string, init?: RequestInit) => {
@@ -50,15 +54,19 @@ export default function App() {
     [sessionId],
   );
 
-  const startSession = async () => {
+  const startSession = async (): Promise<string | null> => {
     setStarting(true);
     try {
       const data: any = await api("/api/session/start", {
         method: "POST",
         body: JSON.stringify({ user_email: email.trim() || null }),
       });
-      if (data.success) setSessionId(data.data.sessionId);
-      else alert(data.error ?? "Failed to start session");
+      if (data.success) {
+        setSessionId(data.data.sessionId);
+        return data.data.sessionId;
+      }
+      alert(data.error ?? "Failed to start session");
+      return null;
     } finally {
       setStarting(false);
     }
@@ -103,11 +111,42 @@ export default function App() {
   // Voice call hook
   const voice = useVoiceCall(openRazorpay);
 
-  // Start session automatically when voice call needs it
+  // The bridge only mints a new session if ours was missing/expired — when
+  // that happens, adopt its session id so cart polling/audit/checkout stay
+  // in sync with whatever session the voice call is actually using.
+  useEffect(() => {
+    if (voice.sessionId && voice.sessionId !== sessionId) {
+      setSessionId(voice.sessionId);
+    }
+  }, [voice.sessionId, sessionId]);
+
+  // Start session automatically when voice call needs it, and always hand
+  // the resolved session id to the voice bridge so it reuses this session
+  // instead of creating a disconnected one.
   const startAndCall = async () => {
-    if (!sessionId) await startSession();
-    // sessionId state may not be set yet — wait a tick then call
-    setTimeout(() => voice.startCall(), 300);
+    const activeSessionId = sessionId ?? (await startSession());
+    if (!activeSessionId) return;
+    voice.startCall(activeSessionId, email.trim() || undefined);
+  };
+
+  // Manual "Add" from the catalog panel — same endpoint the voice tools use,
+  // so it goes through the same stock/budget checks and audit logging.
+  const handleAddToCart = async (productId: string) => {
+    if (!sessionId) {
+      alert("Open the counter first — enter an email (optional) and click \"Open counter\".");
+      return;
+    }
+    setAddingProductId(productId);
+    try {
+      const data: any = await api("/api/cart/add", {
+        method: "POST",
+        body: JSON.stringify({ product_id: productId, quantity: 1 }),
+      });
+      if (data.success) setCart(data.data);
+      else alert(data.error ?? "Could not add item");
+    } finally {
+      setAddingProductId(null);
+    }
   };
 
   return (
@@ -241,13 +280,19 @@ export default function App() {
             ) : (
               cart && cart.items.length > 0 && <span className="cart-meta">Say “checkout” when ready — Razorpay will open.</span>
             )}
+
+            <CrossSell
+              suggestions={cart?.youMightAlsoLike ?? []}
+              onAdd={handleAddToCart}
+              addingId={addingProductId}
+            />
           </div>
         </section>
 
         {/* Right: receipt ledger */}
         {sessionId && (
           <aside className="audit-panel">
-            <AuditTrail sessionId={sessionId} onEvent={(e) => {
+            <BillTimeline sessionId={sessionId} onEvent={(e) => {
               if (e.endpoint !== "/api/checkout" || e.status !== "ok") return;
               const resp: any = e.response ?? {};
               const d = resp.data ?? resp;
@@ -259,6 +304,8 @@ export default function App() {
           </aside>
         )}
       </div>
+
+      <CatalogPanel onAdd={handleAddToCart} addingId={addingProductId} />
     </div>
   );
 }
