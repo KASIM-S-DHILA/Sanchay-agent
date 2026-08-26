@@ -373,6 +373,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
             content: finalReply,
             cart: this.state.cart,
             paymentUrl: executorResult.actions.find((a) => a.type === "checkout_initiated" && a.success)?.paymentUrl,
+            executor: executorResult, // debug
           }),
         );
         return;

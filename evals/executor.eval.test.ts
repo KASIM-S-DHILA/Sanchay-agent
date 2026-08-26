@@ -367,6 +367,11 @@ describe("executeTurn", () => {
 
   it("confirm mode with confirmArmed + non-empty cart → checkout_initiated", async () => {
     if (!gatewayAvailable) { console.warn("Skipped: Razorpay gateway unavailable"); return; }
+    const { paymentLinkQuotaAvailable } = await import("./helpers/razorpay-guard");
+    if (!(await paymentLinkQuotaAvailable(env))) {
+      console.warn("Skipped: payment_link quota exhausted — graceful-failure branch covered elsewhere");
+      return;
+    }
     const cart = [{ productId: "TEE-BLACK-001", name: "Black Classic Tee", price: 79900, quantity: 2 }];
     const plan = makeTurnPlan({ actions: [], requestConfirm: true, requestCancel: false });
     const result = await executeTurn({

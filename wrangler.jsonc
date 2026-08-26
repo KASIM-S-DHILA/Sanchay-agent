@@ -32,7 +32,11 @@
   },
   "migrations": [
     {
-      "tag": "v1",
+      "tag": "v2",
+      "deleted_classes": ["Cart"]
+    },
+    {
+      "tag": "v3",
       "new_sqlite_classes": ["SanchayAgent"]
     }
   ],
