@@ -25,14 +25,6 @@
       "index_name": "sanchay-catalog"
     }
   ],
-  // One-time cleanup: removes the pre-pivot SanchayAgent DO class so the
-  // pure-HTTP script can deploy. Recorded remotely after first success.
-  "migrations": [
-    {
-      "tag": "v4",
-      "deleted_classes": ["SanchayAgent"]
-    }
-  ],
   "observability": {
     "enabled": true
   }

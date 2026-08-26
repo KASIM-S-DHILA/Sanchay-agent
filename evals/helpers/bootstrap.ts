@@ -1,19 +1,16 @@
 /**
- * Idempotent D1 bootstrap for API evals — isolated test D1s start empty and
- * pre-existing local/remote DBs may lack newer columns. Every statement is
- * individually best-effort (ALTERs fail harmlessly when already applied).
+ * D1 bootstrap for API evals — creates all tables fresh.
+ * Eval environments start with an empty D1, so plain CREATE TABLE works.
  */
 export async function bootstrapSchema(db: any): Promise<void> {
   const statements = [
     `CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY, user_id TEXT, status TEXT, expires_at TEXT,
-      created_at TEXT, budget_paise INTEGER)`,
-    `ALTER TABLE sessions ADD COLUMN budget_paise INTEGER`,
+      id TEXT PRIMARY KEY, user_id TEXT, status TEXT,
+      expires_at TEXT, created_at TEXT, budget_paise INTEGER)`,
     `CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY, session_id TEXT, razorpay_order_id TEXT,
       amount INTEGER, currency TEXT, status TEXT, items_json TEXT,
       payment_url TEXT, created_at TEXT)`,
-    `ALTER TABLE orders ADD COLUMN payment_url TEXT`,
     `CREATE TABLE IF NOT EXISTS cart_items (
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, product_id TEXT NOT NULL,
       product_name TEXT NOT NULL, price INTEGER NOT NULL,

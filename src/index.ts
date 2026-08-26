@@ -5,6 +5,7 @@ import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
 import { handleRazorpayWebhook } from "./api/webhook";
 import { handleSeedCatalog } from "./api/admin";
+import { handleVoiceWebSocket } from "./voice/bridge";
 import type { Env } from "./types";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -46,6 +47,11 @@ export default {
         response = await handleAudit(request, env, url);
       } else if (url.pathname === "/webhooks/razorpay" && request.method === "POST") {
         response = await handleRazorpayWebhook(request, env);
+      } else if (url.pathname === "/voice" && request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+        // Explicit 426 for non-WS requests to /voice
+        response = new Response("Expected WebSocket", { status: 426 });
+      } else if (url.pathname === "/voice") {
+        response = await handleVoiceWebSocket(request, env);
       } else if (url.pathname === "/admin/seed-catalog" && request.method === "POST") {
         response = await handleSeedCatalog(request, env);
       } else {
