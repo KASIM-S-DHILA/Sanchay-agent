@@ -113,109 +113,138 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>🛒 Sanchay — Voice Shopping</h1>
-        <p className="subtitle">Talk to shop. Every action logged, bounded & audited.</p>
-        {!sessionId ? (
-          <div className="session-start">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="your@email.com (optional)"
-              className="buyer-input"
-            />
-            <button onClick={startSession} disabled={starting} className="send-btn">
-              {starting ? "Starting…" : "Start shopping session"}
-            </button>
+        <div className="brand">
+          <div className="brand-top">
+            <h1>Sanchay<span> — Voice Counter</span></h1>
+            <span className="eyebrow">Est. bazaar ledger • audited</span>
           </div>
-        ) : (
-          <div className="meta">
-            <span className="badge badge-ok">session active</span>
-            <code className="session-id">{sessionId.slice(0, 13)}…</code>
-            {email && <span> · {email}</span>}
-          </div>
-        )}
+          <p className="subtitle">Speak to fill a bill. Every add, remove and checkout is measured, bounded and stamped — watch your receipt build live.</p>
+        </div>
+        <div className="header-actions">
+          {!sessionId ? (
+            <div className="session-start">
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="your@email.com — optional, for history"
+                className="buyer-input"
+                aria-label="Email for session"
+              />
+              <button onClick={startSession} disabled={starting} className="send-btn">
+                {starting ? "Starting…" : "Open counter"}
+              </button>
+            </div>
+          ) : (
+            <div className="meta">
+              <span className="badge badge-ok">counter open</span>
+              <code className="session-id">#{sessionId.slice(0, 8).toUpperCase()}</code>
+              {email && <span className="meta-email">{email}</span>}
+            </div>
+          )}
+          {sessionId && <span className="eyebrow" style={{ alignSelf: "flex-end" }}>{cart ? `${cart.count} items • ${rupees(cart.total)}` : "0 items"} • live bill</span>}
+        </div>
       </header>
 
       <div className="layout">
-        {/* Left: voice + cart */}
+        {/* Left: tape */}
         <section className="chat-panel">
           <div className="voice-container">
-            <h2>🎤 Voice</h2>
+            <div className="voice-head">
+              <h2>Counter tape</h2>
+              <span className="ledger-no">Tape {sessionId ? sessionId.slice(0, 4).toUpperCase() : "— — —"} • 16 kHz</span>
+            </div>
 
             {!sessionId ? (
-              <p>Start a session first to enable voice shopping.</p>
+              <p className="voice-hint">Open the counter to enable the mic. Try: <strong>“show me hoodies”</strong> → <strong>“add the gray one”</strong> → <strong>“checkout”</strong>.</p>
             ) : (
               <div className="voice-controls">
                 {voice.callState === "idle" && (
                   <button onClick={() => startAndCall()} className="voice-btn">
-                    🎤 Start Voice Call
+                    <span aria-hidden>⬢</span> Start voice call
                   </button>
                 )}
                 {voice.callState === "connecting" && (
                   <button disabled className="voice-btn connecting">
-                    Connecting…
+                    Connecting tape…
                   </button>
                 )}
                 {voice.callState === "listening" && (
                   <div className="voice-status listening">
-                    <span className="pulse-dot red" /> Listening…{" "}
+                    <span className="tape-meter" aria-hidden />
+                    Listening — speak now
                     <button onClick={voice.stopCall} className="stop-btn">End</button>
                   </div>
                 )}
                 {voice.callState === "speaking" && (
                   <div className="voice-status speaking">
-                    <span className="pulse-dot blue" /> Agent speaking…
+                    <span className="tape-meter" aria-hidden />
+                    Sanchay replying…
+                    <button onClick={voice.stopCall} className="stop-btn">End</button>
                   </div>
                 )}
-                {voice.error && <p className="voice-error">{voice.error}</p>}
+                {voice.error && <p className="voice-error" role="alert">{voice.error}</p>}
 
-                {voice.transcripts.length > 0 && (
-                  <div className="transcripts">
+                {voice.transcripts.length > 0 ? (
+                  <div className="transcripts" aria-live="polite">
                     {voice.transcripts.map((t, i) => (
                       <div key={i} className={`transcript ${t.role}`}>
-                        {t.role === "user" ? "🧑 " : "🤖 "}
                         {t.text}
                       </div>
                     ))}
                   </div>
+                ) : (
+                  <p className="voice-hint">
+                    {voice.callState === "idle" ? "Press Start voice call and allow the mic — the tape will type your words and Sanchay’s replies." : "Tape is empty. Say “show me hoodies” to begin."}
+                  </p>
                 )}
               </div>
             )}
           </div>
 
           <div className="cart-display">
-            <h2>🛍 Cart</h2>
+            <div className="cart-head">
+              <h2>Bill — live</h2>
+              <span className="cart-meta">{cart ? `${cart.count} pcs` : "0 pcs"} • carbon copy</span>
+            </div>
             {!cart || cart.items.length === 0 ? (
-              <p>Your cart is empty. Try saying "show me hoodies".</p>
+              <div className="cart-empty">
+                Cart is empty. <strong>Say “show me hoodies”</strong> or “add the black tee” — line items appear here as you speak.
+              </div>
             ) : (
               <>
-                <ul>
+                <ul className="cart-list">
                   {cart.items.map((item) => (
-                    <li key={item.productId}>
-                      {item.quantity} × {item.name} — {rupees(item.price * item.quantity)}
+                    <li key={item.productId} className="cart-row">
+                      <span className="cart-name">
+                        <span className="cart-qty">{item.quantity}×</span> {item.name}
+                      </span>
+                      <span className="cart-price">{rupees(item.price * item.quantity)}</span>
                     </li>
                   ))}
                 </ul>
                 <div className="cart-total">
-                  Total: <strong>{rupees(cart.total)}</strong>
-                  {typeof cart.budgetRemaining === "number" && (
-                    <span className="budget-left">
-                      {" "}· Budget left: {rupees(cart.budgetRemaining)}
-                    </span>
-                  )}
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", opacity: 0.8 }}>Total payable</span>
+                  <span>
+                    <strong>{rupees(cart.total)}</strong>
+                    {typeof cart.budgetRemaining === "number" && (
+                      <span className="budget-left"> · left {rupees(cart.budgetRemaining)}</span>
+                    )}
+                  </span>
                 </div>
               </>
             )}
-            {lastOrder && (
+            {lastOrder ? (
               <div className="order-status">
-                Order <code>{lastOrder.orderId.slice(0, 18)}…</code>:{" "}
-                <strong>{lastOrder.status}</strong>
+                <span className="stamp">Paid — {lastOrder.status}</span>
+                <code>{lastOrder.orderId.slice(0, 18)}…</code>
               </div>
+            ) : (
+              cart && cart.items.length > 0 && <span className="cart-meta">Say “checkout” when ready — Razorpay will open.</span>
             )}
           </div>
         </section>
 
-        {/* Right: audit */}
+        {/* Right: receipt ledger */}
         {sessionId && (
           <aside className="audit-panel">
             <AuditTrail sessionId={sessionId} onEvent={(e) => {

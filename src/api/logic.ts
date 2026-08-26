@@ -141,10 +141,17 @@ export async function searchCatalog(
   let products: Record<string, unknown>[];
   if (query.trim()) {
     const results = await searchProducts(env, query, limit);
-    products = results.map((p) => ({ ...p }));
+    products = results.map((p: any) => ({
+      ...p,
+      price_display: `₹${(p.price / 100).toLocaleString("en-IN")}`,
+    }));
   } else {
     const result = await env.DB.prepare("SELECT id, name, price, stock, category FROM products").all<any>();
-    products = (result.results ?? []).map((p) => ({ ...p }));
+    // price_display so the agent speaks "₹1,999", not "199900 paise"
+    products = (result.results ?? []).map((p: any) => ({
+      ...p,
+      price_display: `₹${(p.price / 100).toLocaleString("en-IN")}`,
+    }));
   }
   const body = { success: true as const, data: { query, products } };
   await logCall(env, sessionId, "/api/catalog", { query, limit }, body);
@@ -163,11 +170,13 @@ async function getCartPayload(env: Env, sessionId: string) {
     productId: r.product_id as string,
     name: r.product_name as string,
     price: r.price as number,
+    price_display: `₹${(r.price / 100).toLocaleString("en-IN")}`,
     quantity: r.quantity as number,
   }));
   const total = rows.reduce((s, r) => s + r.price * r.quantity, 0);
   const count = rows.reduce((s, r) => s + r.quantity, 0);
-  return { items, total, count };
+  const total_display = `₹${(total / 100).toLocaleString("en-IN")}`;
+  return { items, total, total_display, count };
 }
 
 async function getBudget(env: Env, sessionId: string): Promise<number | null> {

@@ -31,17 +31,18 @@ export default {
         response = await handleSessionStart(request, env);
       } else if (url.pathname === "/api/session/end" && request.method === "POST") {
         response = await handleSessionEnd(request, env);
-      } else if (url.pathname === "/api/catalog" && request.method === "GET") {
+      } else if (url.pathname === "/api/catalog" && (request.method === "GET" || request.method === "POST")) {
+        // POST accepted: Sarvam tools are configured all-POST
         response = await handleCatalogSearch(request, env, url);
       } else if (url.pathname === "/api/cart/add" && request.method === "POST") {
         response = await handleCartAdd(request, env);
       } else if (url.pathname === "/api/cart/remove" && request.method === "POST") {
         response = await handleCartRemove(request, env);
-      } else if (url.pathname === "/api/cart" && request.method === "GET") {
+      } else if (url.pathname === "/api/cart" && (request.method === "GET" || request.method === "POST")) {
         response = await handleCartGet(request, env);
       } else if (url.pathname === "/api/checkout" && request.method === "POST") {
         response = await handleCheckout(request, env);
-      } else if (url.pathname.startsWith("/api/order/") && request.method === "GET") {
+      } else if (url.pathname.startsWith("/api/order/") && (request.method === "GET" || request.method === "POST")) {
         response = await handleOrderStatus(request, env, url);
       } else if (url.pathname === "/api/audit" && request.method === "GET") {
         response = await handleAudit(request, env, url);
