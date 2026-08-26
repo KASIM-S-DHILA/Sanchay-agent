@@ -104,6 +104,8 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
     wsUrl.searchParams.set("interaction_type", "call");
     wsUrl.searchParams.set("user_identifier", sessionId);
     wsUrl.searchParams.set("user_identifier_type", "custom");
+    wsUrl.searchParams.set("input_sample_rate", "16000");
+    wsUrl.searchParams.set("output_sample_rate", "22050");
 
     // 2) Connect upstream
     sarvam = new WebSocket(wsUrl.toString());
@@ -187,12 +189,23 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
     browser.addEventListener("message", async (event) => {
       if (closed) return;
       try {
-        if (event.data instanceof ArrayBuffer) {
-          // Raw PCM chunk from browser mic → wrap into Sarvam envelope
-          if (sarvam && sarvam.readyState === WebSocket.OPEN) {
-            const b64 = arrayBufferToBase64(event.data);
-            // format MUST be "audio/wav" — AudioEncoding.LINEAR16 = "audio/wav";
-            // sending "LINEAR16" makes the server abort the session on first chunk
+        // Normalize incoming data — workerd may deliver binary frames as
+        // ArrayBuffer, Blob, or TypedArray depending on runtime/version
+        let bin: ArrayBuffer | null = null;
+        const d = event.data;
+        if (d instanceof ArrayBuffer) {
+          bin = d;
+        } else if (typeof Blob !== "undefined" && d instanceof Blob) {
+          bin = await d.arrayBuffer();
+        } else if (d && typeof d === "object" && "byteLength" in (d as object) && "buffer" in (d as object)) {
+          // TypedArray view over a buffer
+          const view = d as unknown as Uint8Array;
+          bin = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
+        }
+
+        if (bin) {
+          if (bin.byteLength > 0 && sarvam && sarvam.readyState === WebSocket.OPEN) {
+            const b64 = arrayBufferToBase64(bin);
             sarvam.send(sarvamMsg({
               type: "client.media.audio_chunk",
               format: "audio/wav",

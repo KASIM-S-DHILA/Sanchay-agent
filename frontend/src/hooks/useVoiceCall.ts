@@ -25,6 +25,7 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const playTimeRef = useRef(0);
+  const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUserRef = useRef(false);
 
   const cleanupAudio = useCallback(() => {
@@ -62,7 +63,10 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
       if (event.data instanceof ArrayBuffer) {
         // Raw Int16 PCM audio → schedule playback
         await playPcmChunk(event.data);
+        // Speaking while chunks flow; back to listening after a short gap
         setCallState("speaking");
+        if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
+        speakTimerRef.current = setTimeout(() => setCallState("listening"), 900);
         return;
       }
       try {
@@ -144,9 +148,10 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
   }, [cleanupAudio, onCheckoutSuccess]);
 
   const playPcmChunk = async (data: ArrayBuffer) => {
-    // Lazy-create a playback context at Sarvam's output rate (16kHz)
+    // Lazy-create a playback context at Sarvam's output rate (22050 Hz —
+    // declared via output_sample_rate on the signed WS URL)
     if (!playCtxRef.current) {
-      playCtxRef.current = new AudioContext({ sampleRate: 16000 });
+      playCtxRef.current = new AudioContext({ sampleRate: 22050 });
       playTimeRef.current = playCtxRef.current.currentTime;
     }
     const ctx = playCtxRef.current;
