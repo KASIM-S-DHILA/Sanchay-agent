@@ -7,6 +7,15 @@ export interface Env {
   RAZORPAY_KEY_SECRET: string;
   RAZORPAY_WEBHOOK_SECRET: string;
   SARVAM_API_KEY: string;
+  // Merchant-configured order ceiling (paise), independent of whatever
+  // budget a session/caller declares — see checkoutCart in api/logic.ts.
+  // Optional; falls back to a hardcoded default if unset so the ceiling
+  // always exists even without deployment-specific config.
+  MERCHANT_MAX_ORDER_PAISE?: string;
+  // Shared-secret gate for /admin/* and /api/audit — see
+  // middleware/adminAuth.ts. Optional; if unset, those endpoints are
+  // rejected entirely rather than left open.
+  ADMIN_TOKEN?: string;
 }
 
 export interface CartItem {
@@ -23,6 +32,7 @@ export interface ProductSearchResult {
   price: number; // paise
   category: string;
   stock: number;
+  image_url: string | null;
   score: number;
 }
 
