@@ -65,7 +65,7 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
   try {
     // 1) Get a time-limited signed WebSocket URL (API key stays server-side)
     const signedUrlRes = await fetch(
-      `${SARVAM_BASE}orgs/${ORG_ID}/workspaces/${WORKSPACE_ID}/apps/${APP_ID}/url?interaction_type=call&user_identifier=${encodeURIComponent(sessionId)}`,
+      `${SARVAM_BASE}orgs/${ORG_ID}/workspaces/${WORKSPACE_ID}/apps/${APP_ID}/url?interaction_type=call`,
       { headers: { "X-API-Key": env.SARVAM_API_KEY } },
     );
     if (!signedUrlRes.ok) {
@@ -88,9 +88,15 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       await cleanup();
       return new Response("Bad upstream response", { status: 502 });
     }
+    // Mirror the SDK: interaction_type + user_identifier are appended to the
+    // WS URL itself (voice-agent.js augmentWsUrlWithParams). Connecting to the
+    // bare signed URL gets a 403 from Sarvam's gateway.
+    const wsUrl = new URL(signedUrl);
+    wsUrl.searchParams.set("interaction_type", "call");
+    if (sessionId) wsUrl.searchParams.set("user_identifier", sessionId);
 
     // 2) Connect upstream
-    sarvam = new WebSocket(signedUrl);
+    sarvam = new WebSocket(wsUrl.toString());
     sarvam.addEventListener("open", () => {
       // 3) interaction_start — first message after open
       sarvam!.send(sarvamMsg({
