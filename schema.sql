@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS orders (
   currency TEXT,
   status TEXT,
   items_json TEXT,
+  payment_url TEXT,
   created_at TEXT
 );
 
@@ -98,6 +99,11 @@ CREATE TABLE IF NOT EXISTS cart_items (
 
 CREATE INDEX IF NOT EXISTS idx_cart_session ON cart_items(session_id);
 
+-- Required for the atomic ON CONFLICT upsert in addToCart to be race-safe:
+-- without this, concurrent adds for the same product each see "no existing
+-- row" and insert duplicate rows instead of contending for one.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cart_session_product ON cart_items(session_id, product_id);
+
 CREATE TABLE IF NOT EXISTS api_call_log (
   id TEXT PRIMARY KEY,
   session_id TEXT,
@@ -123,3 +129,19 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   last_active TEXT,
   updated_at TEXT
 );
+
+-- Idempotency replay store for cart/add (and future mutating endpoints).
+-- A retry with the same (session_id, endpoint, idempotency_key) replays the
+-- stored result instead of re-executing the mutation.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  endpoint TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  status_code INTEGER NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_unique
+  ON idempotency_keys(session_id, endpoint, idempotency_key);
