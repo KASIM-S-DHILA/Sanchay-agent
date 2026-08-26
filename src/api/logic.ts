@@ -243,15 +243,32 @@ export async function addToCart(
   }
 
   const existing: any = await env.DB.prepare(
-    "SELECT id FROM cart_items WHERE session_id = ? AND product_id = ?",
+    "SELECT id, quantity FROM cart_items WHERE session_id = ? AND product_id = ?",
   )
     .bind(sessionId, productId)
     .first();
   if (existing) {
+    if (existing.quantity + qty > product.stock) {
+      const available = Math.max(0, product.stock - existing.quantity);
+      const body = {
+        success: false as const,
+        error: available === 0 ? "No more stock available" : `Only ${available} more available (stock limit ${product.stock})`,
+      };
+      await logCall(env, sessionId, "/api/cart/add", params, body);
+      return { status: 200, body };
+    }
     await env.DB.prepare("UPDATE cart_items SET quantity = quantity + ? WHERE id = ?")
       .bind(qty, existing.id)
       .run();
   } else {
+    if (qty > product.stock) {
+      const body = {
+        success: false as const,
+        error: `Only ${product.stock} available`,
+      };
+      await logCall(env, sessionId, "/api/cart/add", params, body);
+      return { status: 200, body };
+    }
     await env.DB.prepare(
       "INSERT INTO cart_items (id, session_id, product_id, product_name, price, quantity, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
