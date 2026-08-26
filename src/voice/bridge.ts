@@ -88,12 +88,14 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       await cleanup();
       return new Response("Bad upstream response", { status: 502 });
     }
-    // Mirror the SDK: interaction_type + user_identifier are appended to the
-    // WS URL itself (voice-agent.js augmentWsUrlWithParams). Connecting to the
-    // bare signed URL gets a 403 from Sarvam's gateway.
+    // Mirror the SDK: interaction_type + user_identifier(+type) are REQUIRED
+    // query params on the WS connect URL — without them the gateway 403s.
+    // Verified empirically: bare/+interaction_type → 403; adding
+    // user_identifier+user_identifier_type → 101.
     const wsUrl = new URL(signedUrl);
     wsUrl.searchParams.set("interaction_type", "call");
-    if (sessionId) wsUrl.searchParams.set("user_identifier", sessionId);
+    wsUrl.searchParams.set("user_identifier", sessionId);
+    wsUrl.searchParams.set("user_identifier_type", "custom");
 
     // 2) Connect upstream
     sarvam = new WebSocket(wsUrl.toString());
