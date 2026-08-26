@@ -19,7 +19,15 @@ export async function handleCartAdd(request: Request, env: Env): Promise<Respons
     return Response.json({ success: false, error: "product_id is required" }, { status: 400 });
   }
 
-  const result = await addToCart(env, session.id, productId, Number(body.quantity) || 1);
+  let qty: number | undefined;
+  if (body.quantity != null && body.quantity !== "") {
+    const n = Number(body.quantity);
+    if (!Number.isInteger(n) || n < 1 || n > 99) {
+      return Response.json({ success: false, error: "quantity must be an integer 1-99" }, { status: 400 });
+    }
+    qty = n;
+  }
+  const result = await addToCart(env, session.id, productId, qty ?? 1);
   return Response.json(result.body, { status: result.status });
 }
 
@@ -39,13 +47,15 @@ export async function handleCartRemove(request: Request, env: Env): Promise<Resp
     return Response.json({ success: false, error: "product_id is required" }, { status: 400 });
   }
 
-  const qty = body.quantity != null ? Number(body.quantity) : undefined;
-  const result = await removeFromCart(
-    env,
-    session.id,
-    productId,
-    qty != null && Number.isInteger(qty) && qty > 0 ? qty : undefined,
-  );
+  let qty: number | undefined;
+  if (body.quantity != null && body.quantity !== "") {
+    const n = Number(body.quantity);
+    if (!Number.isInteger(n) || n < 1 || n > 99) {
+      return Response.json({ success: false, error: "quantity must be an integer 1-99" }, { status: 400 });
+    }
+    qty = n;
+  }
+  const result = await removeFromCart(env, session.id, productId, qty);
   return Response.json(result.body, { status: result.status });
 }
 
