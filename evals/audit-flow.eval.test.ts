@@ -160,6 +160,8 @@ describe("Audit flow (full turn engine via WS)", () => {
     const events = await audit(sid);
     const init = events.find((e) => e.action === "session.init");
     expect(init).toBeDefined();
-    expect(init.reason).toContain("audit-test@example.com");
+    // New audit puts email in detail, reason is "new user" or "returning user, session N"
+    const combined = `${init.reason} ${init.detail || ""}`;
+    expect(combined).toContain("audit-test@example.com");
   });
 });

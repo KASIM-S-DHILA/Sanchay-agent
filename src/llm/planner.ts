@@ -6,6 +6,7 @@ import type {
   CartItem,
   TurnRecord,
   PendingIntent,
+  UserPreferences,
 } from "../types";
 import type { AIProvider } from "./provider";
 import { WorkersAIProvider } from "./workers-ai-provider";
@@ -17,6 +18,7 @@ export interface PlannerParams {
   history: TurnRecord[];
   lastDiscussedProductId: string | null;
   pendingIntent: PendingIntent | null;
+  userPreferences?: UserPreferences | null;
 }
 
 // Safe defaults
@@ -68,8 +70,8 @@ function formatPendingIntent(pending: PendingIntent | null): string {
   return JSON.stringify(pending);
 }
 
-function buildPrompt(params: PlannerParams): string {
-  const { userMessage, searchResults, cart, history, lastDiscussedProductId, pendingIntent } = params;
+export function buildPrompt(params: PlannerParams): string {
+  const { userMessage, searchResults, cart, history, lastDiscussedProductId, pendingIntent, userPreferences } = params;
 
   return `You are a shopping assistant planner. Your job is to understand what the user wants and produce a structured plan.
 
@@ -80,6 +82,7 @@ You receive:
 - Conversation history (last 8 turns)
 - The last product discussed (for resolving "it", "that", "one more")
 - A pending budget intent (if the user specified a budget)
+- Cross-session user context (if known)
 
 Rules:
 1. Only use product IDs from the search results or cart. Never invent products.
@@ -91,6 +94,8 @@ Rules:
 7. If the user says "replace" or "instead", set replace: true on the add action.
 8. If the user asks to see/search/browse, output a search action with their query.
 9. If the user's message is unclear, output no_action and a clarifying reply.
+10. If the user has a budget preference from a previous session, remind them of it if they're browsing without a budget this session.
+11. If the user has previously purchased products, you can suggest complementary items from the same categories.
 
 Output ONLY valid JSON. No markdown, no code fences, no explanation.
 
@@ -131,8 +136,32 @@ Last discussed productId: ${lastDiscussedProductId ?? "null"}
 
 Pending budget intent: ${formatPendingIntent(pendingIntent)}
 
+User context:
+${formatUserContext(userPreferences)}
+
 User message: "${userMessage}"
 `;
+}
+
+function formatUserContext(prefs?: UserPreferences | null): string {
+  if (!prefs) return "(no prior history)";
+  const lines: string[] = [];
+  if (prefs.preferredCategories.length > 0) {
+    lines.push(`- Preferred categories: ${prefs.preferredCategories.join(", ")}`);
+  }
+  if (prefs.budgetPreference != null) {
+    lines.push(`- Budget preference: ₹${(prefs.budgetPreference / 100).toLocaleString("en-IN")}`);
+  }
+  if (prefs.previousProducts.length > 0) {
+    lines.push(`- Previously added product IDs: ${prefs.previousProducts.join(", ")}`);
+  }
+  if (prefs.purchaseHistory.length > 0) {
+    lines.push(`- Purchased before (product IDs): ${prefs.purchaseHistory.join(", ")}`);
+  }
+  lines.push(
+    `- Session count: ${prefs.sessionCount}${prefs.sessionCount > 1 ? " (returning user)" : " (new user)"}`,
+  );
+  return lines.join("\n");
 }
 
 export function parsePlan(raw: string): TurnPlan {

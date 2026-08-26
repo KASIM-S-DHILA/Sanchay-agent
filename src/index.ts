@@ -86,6 +86,57 @@ export default {
           .first();
         const orderSession = orderRow?.session_id ?? "";
 
+        // Cross-session memory — record purchase history for the buyer
+        if (orderRow?.session_id) {
+          const items = JSON.parse(orderRow.items_json || "[]") as { productId?: string }[];
+          const productIds = items.map((i) => i.productId).filter(Boolean) as string[];
+
+          // Resolve the user email: sessions table first, then live DO state
+          let userEmail: string | null = null;
+          try {
+            const sessRow: any = await env.DB.prepare("SELECT user_id FROM sessions WHERE id = ?")
+              .bind(orderRow.session_id)
+              .first();
+            userEmail = sessRow?.user_id ?? null;
+          } catch {
+            // sessions table may not exist in isolated test D1
+          }
+          if (!userEmail) {
+            try {
+              const doId = env.SanchayAgent.idFromName(orderRow.session_id);
+              const stub = env.SanchayAgent.get(doId) as unknown as {
+                getUserEmail(): Promise<string | null>;
+              };
+              userEmail = await stub.getUserEmail();
+            } catch {
+              // DO unreachable — skip purchase history rather than fail the webhook
+            }
+          }
+
+          if (userEmail && productIds.length > 0) {
+            await env.DB.prepare(
+              "CREATE TABLE IF NOT EXISTS user_preferences (user_id TEXT PRIMARY KEY, preferred_categories TEXT, budget_preference INTEGER, previous_products TEXT, purchase_history TEXT, session_count INTEGER DEFAULT 0, last_active TEXT, updated_at TEXT)",
+            ).run();
+            await env.DB.prepare(
+              "INSERT OR IGNORE INTO user_preferences (user_id, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at) VALUES (?, '[]', NULL, '[]', '[]', 0, NULL, NULL)",
+            )
+              .bind(userEmail)
+              .run();
+            const prefs: any = await env.DB.prepare(
+              "SELECT purchase_history FROM user_preferences WHERE user_id = ?",
+            )
+              .bind(userEmail)
+              .first();
+            const existing = JSON.parse(prefs?.purchase_history || "[]");
+            const updated = [...new Set([...existing, ...productIds])];
+            await env.DB.prepare(
+              "UPDATE user_preferences SET purchase_history = ?, updated_at = ? WHERE user_id = ?",
+            )
+              .bind(JSON.stringify(updated), new Date().toISOString(), userEmail)
+              .run();
+          }
+        }
+
         // Webhooks bypass the DO — write audit directly to D1 audit_logs
         await env.DB.prepare(
           "INSERT INTO audit_logs (id, session_id, action, intent, params_json, result_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

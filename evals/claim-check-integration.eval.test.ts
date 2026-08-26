@@ -55,6 +55,7 @@ const emptyState: AgentState = {
   pendingIntent: null,
   confirmArmed: false,
   sessionMeta: null,
+  userPreferences: null,
 };
 
 describe("Claim-check integration (full turn)", () => {

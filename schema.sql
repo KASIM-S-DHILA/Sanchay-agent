@@ -71,3 +71,14 @@ CREATE TABLE IF NOT EXISTS notifications (
   payload_json TEXT,
   created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id TEXT PRIMARY KEY,
+  preferred_categories TEXT,
+  budget_preference INTEGER,
+  previous_products TEXT,
+  purchase_history TEXT,
+  session_count INTEGER DEFAULT 0,
+  last_active TEXT,
+  updated_at TEXT
+);

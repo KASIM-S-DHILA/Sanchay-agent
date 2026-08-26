@@ -1,4 +1,13 @@
 // Agent state — persisted per-session via this.setState()
+export interface UserPreferences {
+  preferredCategories: string[];
+  budgetPreference: number | null;
+  previousProducts: string[];
+  purchaseHistory: string[];
+  sessionCount: number;
+  lastActive: string | null;
+}
+
 export interface AgentState {
   cart: CartItem[];
   history: TurnRecord[];
@@ -6,6 +15,7 @@ export interface AgentState {
   pendingIntent: PendingIntent | null;
   confirmArmed: boolean;
   sessionMeta: { userId: string; expiresAt: string } | null;
+  userPreferences: UserPreferences | null; // null until loaded from D1
 }
 
 export interface CartItem {

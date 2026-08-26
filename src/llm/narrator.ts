@@ -1,5 +1,5 @@
 import type { AIProvider } from "./provider";
-import type { CartItem, ExecutorResult, PendingIntent, ProductSearchResult, TurnRecord } from "../types";
+import type { CartItem, ExecutorResult, PendingIntent, ProductSearchResult, TurnRecord, UserPreferences } from "../types";
 
 export interface NarratorParams {
   userMessage: string;
@@ -11,6 +11,7 @@ export interface NarratorParams {
   // ponytail deviation: spec's example #3 shows search results in the prompt but
   // omits them from NarratorParams — without them rule 3 is unsatisfiable
   searchResults?: ProductSearchResult[];
+  userPreferences?: UserPreferences | null;
 }
 
 const NARRATOR_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
@@ -63,7 +64,7 @@ function formatPendingIntent(pending: PendingIntent | null): string {
 }
 
 export function buildNarratorPrompt(params: NarratorParams): string {
-  const { executorResult, cart, cartTotal, history, pendingIntent, searchResults } = params;
+  const { executorResult, cart, cartTotal, history, pendingIntent, searchResults, userPreferences } = params;
 
   return `You are a warm, friendly shopping assistant. Your job is to tell the user what happened in a natural, conversational way.
 
@@ -72,6 +73,7 @@ You receive:
 - A list of actions that were executed (with results — success or failure)
 - The current cart contents
 - The conversation history
+- Cross-session user context (if known)
 
 Rules:
 1. Only mention things that actually happened. The actions list tells you what succeeded and what failed.
@@ -85,6 +87,8 @@ Rules:
 9. Never mention prices in paise — convert to rupees (divide by 100).
 10. If the user confirmed a checkout, acknowledge it warmly and explain the next step.
 11. If the user cancelled, reassure them their cart is saved.
+12. If the user is returning (session count > 1), you can be slightly more familiar — "Welcome back!" or reference their preferences naturally.
+13. Don't be creepy — don't list their entire history. Use it subtly.
 
 Examples:
 
@@ -127,7 +131,25 @@ ${formatHistory(history)}
 
 Pending budget intent: ${formatPendingIntent(pendingIntent)}
 
+User context:
+${formatNarratorContext(userPreferences)}
+
 Write your reply now. Plain conversational prose only — no JSON, no markdown, no lists.`;
+}
+
+function formatNarratorContext(prefs?: UserPreferences | null): string {
+  if (!prefs) return "(no prior history)";
+  const lines: string[] = [];
+  lines.push(
+    `- This is session #${prefs.sessionCount}${prefs.sessionCount > 1 ? " (returning user)" : ""}`,
+  );
+  if (prefs.preferredCategories.length > 0) {
+    lines.push(`- They've previously shown interest in: ${prefs.preferredCategories.join(", ")}`);
+  }
+  if (prefs.budgetPreference != null) {
+    lines.push(`- Their usual budget is around ₹${(prefs.budgetPreference / 100).toLocaleString("en-IN")}`);
+  }
+  return lines.join("\n");
 }
 
 export async function callNarrator(provider: AIProvider, params: NarratorParams): Promise<string> {

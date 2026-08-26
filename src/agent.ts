@@ -14,7 +14,7 @@ import { createChatProvider } from "./llm/provider-factory";
 import { extractBudgetIntent } from "./mandates";
 import { issueIntentMandate } from "./mandates/jwt";
 import { checkProbeGate, getProbeRefusal } from "./safety/probe-gate";
-import type { AgentState, Env, TurnPlan, TurnRecord } from "./types";
+import type { AgentState, Env, TurnPlan, TurnRecord, UserPreferences } from "./types";
 
 export class SanchayAgent extends Agent<Env, AgentState> {
   // ---- lifecycle ---------------------------------------------------------
@@ -58,7 +58,133 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     pendingIntent: null,
     confirmArmed: false,
     sessionMeta: null,
+    userPreferences: null,
   };
+
+  // ---- cross-session user preferences ------------------------------------
+
+  private static PREFERENCES_DDL = `
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id TEXT PRIMARY KEY,
+      preferred_categories TEXT,
+      budget_preference INTEGER,
+      previous_products TEXT,
+      purchase_history TEXT,
+      session_count INTEGER DEFAULT 0,
+      last_active TEXT,
+      updated_at TEXT
+    );
+  `;
+
+  /** Init handshake — load-or-create prefs, bump sessionCount, persist. */
+  async applyInit(email: string): Promise<UserPreferences> {
+    this.commitState({
+      sessionMeta: { userId: email, expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
+    });
+
+    await this.env.DB.prepare(SanchayAgent.PREFERENCES_DDL).run();
+    const row: any = await this.env.DB.prepare("SELECT * FROM user_preferences WHERE user_id = ?")
+      .bind(email)
+      .first();
+
+    let prefs: UserPreferences;
+    if (row) {
+      prefs = {
+        preferredCategories: JSON.parse(row.preferred_categories || "[]"),
+        budgetPreference: row.budget_preference ?? null,
+        previousProducts: JSON.parse(row.previous_products || "[]"),
+        purchaseHistory: JSON.parse(row.purchase_history || "[]"),
+        sessionCount: (row.session_count || 0) + 1,
+        lastActive: new Date().toISOString(),
+      };
+    } else {
+      prefs = {
+        preferredCategories: [],
+        budgetPreference: null,
+        previousProducts: [],
+        purchaseHistory: [],
+        sessionCount: 1,
+        lastActive: new Date().toISOString(),
+      };
+    }
+    this.commitState({ userPreferences: prefs });
+
+    await this.env.DB.prepare(
+      `INSERT INTO user_preferences
+         (user_id, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         session_count = excluded.session_count, last_active = excluded.last_active, updated_at = excluded.updated_at`,
+    )
+      .bind(
+        email,
+        JSON.stringify(prefs.preferredCategories),
+        prefs.budgetPreference,
+        JSON.stringify(prefs.previousProducts),
+        JSON.stringify(prefs.purchaseHistory),
+        prefs.sessionCount,
+        prefs.lastActive,
+        prefs.lastActive,
+      )
+      .run();
+
+    return prefs;
+  }
+
+  /** Stage 2 hook — remember the latest budget mandate. */
+  async recordBudget(budgetPaise: number): Promise<void> {
+    if (!this.state.userPreferences) return;
+    const next = { ...this.state.userPreferences, budgetPreference: budgetPaise };
+    this.commitState({ userPreferences: next });
+    await this.updateUserPreferences();
+  }
+
+  /** Post-executor hook — merge added product ids + their categories. */
+  async recordAddedProducts(productIds: string[]): Promise<void> {
+    if (!this.state.userPreferences || productIds.length === 0) return;
+    const categories = await this.fetchProductCategories(productIds);
+    const next: UserPreferences = {
+      ...this.state.userPreferences,
+      previousProducts: [...new Set([...this.state.userPreferences.previousProducts, ...productIds])],
+      preferredCategories: [...new Set([...this.state.userPreferences.preferredCategories, ...categories])],
+    };
+    this.commitState({ userPreferences: next });
+    await this.updateUserPreferences();
+  }
+
+  private async fetchProductCategories(productIds: string[]): Promise<string[]> {
+    if (productIds.length === 0) return [];
+    const placeholders = productIds.map(() => "?").join(", ");
+    const result = await this.env.DB.prepare(
+      `SELECT DISTINCT category FROM products WHERE id IN (${placeholders})`,
+    )
+      .bind(...productIds)
+      .all<{ category: string }>();
+    return (result.results ?? []).map((r) => r.category).filter(Boolean);
+  }
+
+  private async updateUserPreferences(): Promise<void> {
+    if (!this.state.userPreferences || !this.state.sessionMeta) return;
+    const prefs = this.state.userPreferences;
+    const userId = this.state.sessionMeta.userId;
+    await this.env.DB.prepare(
+      "UPDATE user_preferences SET preferred_categories = ?, budget_preference = ?, previous_products = ?, purchase_history = ?, updated_at = ? WHERE user_id = ?",
+    )
+      .bind(
+        JSON.stringify(prefs.preferredCategories),
+        prefs.budgetPreference,
+        JSON.stringify(prefs.previousProducts),
+        JSON.stringify(prefs.purchaseHistory),
+        new Date().toISOString(),
+        userId,
+      )
+      .run();
+  }
+
+  /** Webhook support — resolve the buyer email for an order's session. */
+  async getUserEmail(): Promise<string | null> {
+    return this.state.sessionMeta?.userId ?? null;
+  }
 
   async onConnect() {
     // Welcome is deferred until the init handshake delivers the buyer email
@@ -107,15 +233,16 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     }
 
     if (parsed.type !== "chat" || !parsed.content) {
-      // init handshake — capture buyer email for payment links
+      // init handshake — capture buyer email, load cross-session preferences
       if (parsed.type === "init" && parsed.email) {
-        this.commitState({
-          sessionMeta: {
-            userId: parsed.email,
-            expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-          },
+        const prefs = await this.applyInit(parsed.email);
+        this.audit({
+          action: "session.init",
+          actor: "user",
+          status: "ok",
+          reason: prefs.sessionCount > 1 ? `returning user, session ${prefs.sessionCount}` : "new user",
+          detail: parsed.email,
         });
-        this.audit({ action: "session.init", actor: "user", status: "ok", reason: `email ${parsed.email}` });
         connection.send(
           JSON.stringify({
             type: "connected",
@@ -165,6 +292,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
         detail: budget.span,
       });
       this.commitState({ pendingIntent: { type: "confirm", budgetValue: budget.value, span: budget.span } });
+      await this.recordBudget(budget.value!);
     }
 
     // STAGE 3: Semantic search — narrow catalog for the planner
@@ -214,6 +342,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
             cart: this.state.cart,
             cartTotal: executorResult.cartTotal,
             pendingIntent: this.state.pendingIntent,
+        userPreferences: this.state.userPreferences,
           });
         } catch {
           narratorReply = renderFallback(buildFacts(executorResult));
@@ -283,6 +412,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
         history: this.state.history,
         lastDiscussedProductId: this.state.lastDiscussedProductId,
         pendingIntent: this.state.pendingIntent,
+        userPreferences: this.state.userPreferences,
       });
     } catch (e) {
       turnPlan = {
@@ -354,6 +484,15 @@ export class SanchayAgent extends Agent<Env, AgentState> {
       }
     }
 
+    // Cross-session memory — remember successful adds
+    const addedProductIds = executorResult.actions
+      .filter((a) => a.type === "add" && a.success)
+      .map((a) => a.productId!)
+      .filter(Boolean);
+    if (addedProductIds.length > 0) {
+      await this.recordAddedProducts(addedProductIds);
+    }
+
     // STAGE 6: Narrator — generate natural reply from executor results
     let narratorReply: string;
     try {
@@ -364,6 +503,7 @@ export class SanchayAgent extends Agent<Env, AgentState> {
         cart: this.state.cart,
         cartTotal: executorResult.cartTotal,
         pendingIntent: this.state.pendingIntent,
+        userPreferences: this.state.userPreferences,
         searchResults,
       });
     } catch (e) {
@@ -488,4 +628,5 @@ export class SanchayAgent extends Agent<Env, AgentState> {
     );
   }
 }
+
 

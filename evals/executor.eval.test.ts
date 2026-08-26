@@ -59,6 +59,7 @@ function makeAgentState(overrides: Partial<AgentState> = {}): AgentState {
     pendingIntent: null,
     confirmArmed: false,
     sessionMeta: null,
+    userPreferences: null,
     ...overrides,
   };
 }
