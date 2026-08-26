@@ -4,16 +4,22 @@ import { startSession, endSession } from "../api/logic";
 /**
  * Voice WebSocket bridge (Level 3).
  *
- * Protocol notes reverse-engineered from sarvam-conv-ai-sdk dist source:
+ * Protocol notes reverse-engineered from sarvam-conv-ai-sdk dist source
+ * AND verified empirically against the live gateway (scripts/diag-sarvam.mjs):
  * - Signed-URL handshake: GET {SARVAM_BASE}/orgs/{org}/workspaces/{ws}/apps/{app}/url
  *   ?interaction_type=call with X-API-Key header → { url: <wss url>, reference_id }
- * - First WS message: client.action.interaction_start (origin CLIENT,
- *   timestamp seconds, agent_variables)
+ * - WS connect REQUIRES query params on the signed URL, else 403:
+ *   interaction_type=call & user_identifier & user_identifier_type
+ *   (input_sample_rate/output_sample_rate also appended by the SDK)
+ * - All client messages carry origin:"client" (LOWERCASE — "CLIENT" kills the
+ *   session silently) and audio chunks format:"audio/wav" (NOT "LINEAR16" —
+ *   wrong string aborts the session on first chunk)
+ * - First WS message: client.action.interaction_start
  * - Audio: JSON envelopes with base64 LINEAR16 PCM —
- *   out: {type:"client.media.audio_chunk", origin:"CLIENT", timestamp,
- *         audio_base64, format:"LINEAR16", sample_rate}
+ *   out: {type:"client.media.audio_chunk", origin:"client", timestamp,
+ *         audio_base64, format:"audio/wav", sample_rate}
  *   in:  {type:"server.media.audio_chunk", audio_base64, format, sample_rate,
- *         status:"ONGOING"|"COMPLETED"}
+ *         status:"pending"|"completed"}
  * - Keepalive: respond to server.system.ping with client.system.pong
  *   (+ event_id echo)
  * - Transcripts/state: server.event.transcription,
@@ -30,7 +36,9 @@ const WORKSPACE_ID = "01a03bee-6465-785a-8a1d-56032e094e67";
 const APP_ID = "Conversatio-2de22e7c-7bd0";
 
 function sarvamMsg(obj: Record<string, unknown>): string {
-  return JSON.stringify({ origin: "CLIENT", timestamp: Date.now() / 1000, ...obj });
+  // origin MUST be lowercase "client" — MsgOrigin.CLIENT = "client"; uppercase
+  // gets the session silently killed by the gateway before interaction_connect
+  return JSON.stringify({ origin: "client", timestamp: Date.now() / 1000, ...obj });
 }
 
 export async function handleVoiceWebSocket(request: Request, env: Env): Promise<Response> {
@@ -183,9 +191,11 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
           // Raw PCM chunk from browser mic → wrap into Sarvam envelope
           if (sarvam && sarvam.readyState === WebSocket.OPEN) {
             const b64 = arrayBufferToBase64(event.data);
+            // format MUST be "audio/wav" — AudioEncoding.LINEAR16 = "audio/wav";
+            // sending "LINEAR16" makes the server abort the session on first chunk
             sarvam.send(sarvamMsg({
               type: "client.media.audio_chunk",
-              format: "LINEAR16",
+              format: "audio/wav",
               sample_rate: 16000,
               audio_base64: b64,
             }));
