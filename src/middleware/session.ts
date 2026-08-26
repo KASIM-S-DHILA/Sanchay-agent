@@ -1,8 +1,7 @@
 import type { Env, Session } from "../types";
 
-/** Extracts and validates x-session-id. Returns null when missing/expired/ended. */
-export async function validateSession(env: Env, request: Request): Promise<Session | null> {
-  const sessionId = request.headers.get("x-session-id");
+/** Validates a raw session id against D1. Returns null when missing/expired/ended. */
+export async function validateSessionId(env: Env, sessionId: string | null | undefined): Promise<Session | null> {
   if (!sessionId) return null;
 
   const row = await env.DB.prepare(
@@ -21,6 +20,11 @@ export async function validateSession(env: Env, request: Request): Promise<Sessi
     expiresAt: row.expires_at as string,
     createdAt: row.created_at as string,
   };
+}
+
+/** Extracts and validates x-session-id. Returns null when missing/expired/ended. */
+export async function validateSession(env: Env, request: Request): Promise<Session | null> {
+  return validateSessionId(env, request.headers.get("x-session-id"));
 }
 
 export const UNAUTHORIZED = (): { body: Record<string, unknown>; status: number } => ({

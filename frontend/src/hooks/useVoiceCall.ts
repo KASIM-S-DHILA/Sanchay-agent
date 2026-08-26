@@ -33,7 +33,7 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
     streamRef.current = null;
     workletRef.current?.disconnect();
     workletRef.current = null;
-    try { audioCtxRef.current?.close(); } catch {}
+    try { audioCtxRef.current?.close(); } catch { }
     audioCtxRef.current = null;
     // Let playback context drain naturally
   }, []);
@@ -48,14 +48,19 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
     setCallState("idle");
   }, [cleanupAudio]);
 
-  const startCall = useCallback(async () => {
+  const startCall = useCallback(async (existingSessionId?: string | null, email?: string) => {
     setError(null);
     setCallState("connecting");
     closedByUserRef.current = false;
 
-    // 1. WebSocket to Worker bridge
+    // 1. WebSocket to Worker bridge — pass the browser's existing session
+    // (if any) so voice reuses the same cart/audit/budget session instead
+    // of the bridge minting a second, disconnected one.
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${window.location.host}/voice`);
+    const wsUrl = new URL(`${proto}//${window.location.host}/voice`);
+    if (existingSessionId) wsUrl.searchParams.set("session_id", existingSessionId);
+    if (email) wsUrl.searchParams.set("email", email);
+    const ws = new WebSocket(wsUrl.toString());
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
@@ -109,7 +114,7 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
             setCallState("idle");
             break;
         }
-      } catch {}
+      } catch { }
     };
 
     ws.onclose = () => {

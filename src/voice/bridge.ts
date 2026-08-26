@@ -1,5 +1,6 @@
 import type { Env } from "../types";
-import { startSession, endSession } from "../api/logic";
+import { startSession, endSession, getVoiceAgentVariables } from "../api/logic";
+import { validateSessionId } from "../middleware/session";
 
 /**
  * Voice WebSocket bridge (Level 3).
@@ -48,9 +49,24 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
 
   const url = new URL(request.url);
   const email = url.searchParams.get("email") ?? "";
+  const requestedSessionId = url.searchParams.get("session_id");
 
-  // Sanchay session for this voice call
-  const { sessionId } = await startSession(env, { user_email: email || undefined });
+  // Reuse the browser's existing session if it's still valid, so voice and
+  // the REST/cart UI share one session (same cart, budget, audit trail).
+  // Only fall back to minting a new session when none was supplied or it's
+  // no longer valid — never silently fork a second session out from under
+  // an active browser tab.
+  const existing = await validateSessionId(env, requestedSessionId);
+  let sessionId: string;
+  let ownsSession: boolean;
+  if (existing) {
+    sessionId = existing.id;
+    ownsSession = false;
+  } else {
+    const started = await startSession(env, { user_email: email || undefined });
+    sessionId = started.sessionId;
+    ownsSession = true;
+  }
 
   const pair = new WebSocketPair();
   const browser = pair[1]; // Workers API: pair[0]=client (returned), pair[1]=server
@@ -65,9 +81,13 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
   const cleanup = async () => {
     if (closed) return;
     closed = true;
-    try { await endSession(env, sessionId); } catch {}
-    try { sarvam?.close(); } catch {}
-    try { browser.close(); } catch {}
+    // Only end sessions the bridge itself created — a session reused from
+    // the browser must stay alive for cart polling/checkout after the call.
+    if (ownsSession) {
+      try { await endSession(env, sessionId); } catch { }
+    }
+    try { sarvam?.close(); } catch { }
+    try { browser.close(); } catch { }
   };
 
   try {
@@ -110,14 +130,22 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
     // 2) Connect upstream
     sarvam = new WebSocket(wsUrl.toString());
     sarvam.addEventListener("open", () => {
-      // 3) interaction_start — first message after open
-      sarvam!.send(sarvamMsg({
-        type: "client.action.interaction_start",
-        agent_variables: {
-          session_id: sessionId,
-          user_email: email || undefined,
-        },
-      }));
+      // 3) interaction_start — first message after open. agent_variables
+      // now matches the app's full 12-key schema (see getVoiceAgentVariables
+      // for which fields are backed by real data vs. sent empty). The
+      // listener itself stays sync — Workers WebSocket event listeners
+      // must not be async (a returned promise is silently dropped, so a
+      // thrown error here would vanish instead of hitting the catch below).
+      getVoiceAgentVariables(env, sessionId)
+        .then((agentVariables) => {
+          if (sarvam && sarvam.readyState === WebSocket.OPEN) {
+            sarvam.send(sarvamMsg({
+              type: "client.action.interaction_start",
+              agent_variables: agentVariables,
+            }));
+          }
+        })
+        .catch((e) => console.error("interaction_start agent_variables failed:", e));
       browser.send(JSON.stringify({ type: "state", state: "listening" }));
     });
 
