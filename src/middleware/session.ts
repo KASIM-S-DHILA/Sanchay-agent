@@ -50,6 +50,11 @@ export async function logAuthFailure(
   endpoint: string,
 ): Promise<void> {
   const attempted = request.headers.get("x-session-id");
+  const { isUnsubstitutedPlaceholder } = await import("./placeholders");
+  // Naming this case separately turns a mystery 401 into an instruction.
+  const reason = isUnsubstitutedPlaceholder(attempted)
+    ? "unsubstituted_template_in_x_session_id"
+    : "invalid_or_expired_session";
   try {
     const { logApiCall } = await import("./audit");
     await logApiCall(env, {
@@ -59,8 +64,8 @@ export async function logAuthFailure(
       endpoint,
       method: request.method,
       params: {
-        rejected: "invalid_or_expired_session",
-        session_id_supplied: attempted ? `${attempted.slice(0, 8)}…` : null,
+        rejected: reason,
+        session_id_supplied: attempted ? `${attempted.slice(0, 20)}…` : null,
         user_agent: request.headers.get("user-agent")?.slice(0, 120) ?? null,
       },
       response: { success: false, error: "Invalid or expired session" },
