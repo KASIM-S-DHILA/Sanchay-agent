@@ -63,6 +63,10 @@ export async function logApiCall(
     durationMs: number;
   },
 ): Promise<void> {
+  // D1 row limit ~1MB; catalog responses can exceed it — truncate, keep head
+  const cap = (v: string | null) =>
+    v && v.length > 50_000 ? v.slice(0, 50_000) + '…[truncated]' : v;
+
   await env.DB.prepare(
     `INSERT INTO api_call_log (id, session_id, endpoint, method, params_json, response_json, status, duration_ms, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -72,8 +76,8 @@ export async function logApiCall(
       entry.sessionId,
       entry.endpoint,
       entry.method,
-      entry.params ? JSON.stringify(entry.params) : null,
-      entry.response ? JSON.stringify(entry.response) : null,
+      cap(entry.params ? JSON.stringify(entry.params) : null),
+      cap(entry.response ? JSON.stringify(entry.response) : null),
       entry.status,
       entry.durationMs,
       new Date().toISOString(),
