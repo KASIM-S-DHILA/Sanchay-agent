@@ -45,7 +45,7 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
   const { sessionId } = await startSession(env, { user_email: email || undefined });
 
   const pair = new WebSocketPair();
-  const browser = (pair as any).server as WebSocket;
+  const browser = pair[1]; // Workers API: pair[0]=client (returned), pair[1]=server
   browser.accept();
 
   // Tell the browser which session owns this call
