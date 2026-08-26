@@ -253,11 +253,20 @@ export async function searchCatalog(
     }));
   } else {
     const result = await env.DB.prepare("SELECT id, name, price, stock, category, image_url FROM products").all<any>();
+    // Renamed id -> productId so this branch's shape matches searchProducts'
+    // exactly. Previously a browse-all response used "id" while a real
+    // search used "productId" for the same value, so a tool consumer (the
+    // voice agent, told to pass back "the id field") could find no id field
+    // at all after a real search and pick or invent the wrong product_id.
     // price_display so the agent speaks "₹1,999", not "199900 paise"
-    products = (result.results ?? []).map((p: any) => ({
-      ...p,
-      price_display: `₹${(p.price / 100).toLocaleString("en-IN")}`,
-    }));
+    products = (result.results ?? []).map((p: any) => {
+      const { id, ...rest } = p;
+      return {
+        ...rest,
+        productId: id,
+        price_display: `₹${(p.price / 100).toLocaleString("en-IN")}`,
+      };
+    });
   }
   const body = { success: true as const, data: { query, products } };
   await logCall(env, sessionId, "/api/catalog", { query, limit }, body);
