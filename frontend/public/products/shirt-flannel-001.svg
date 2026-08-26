@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#5c2b23"/>
+  <path d="M135 70 L200 100 L265 70 L295 105 L265 135 L250 122 L250 340 L150 340 L150 122 L135 135 L105 105 Z" fill="#7a3c30" stroke="#964c3d" stroke-width="3"/>
+  <line x1="150" y1="150" x2="250" y2="150" stroke="#3f1e18" stroke-width="4"/>
+  <line x1="150" y1="220" x2="250" y2="220" stroke="#3f1e18" stroke-width="4"/>
+  <line x1="150" y1="290" x2="250" y2="290" stroke="#3f1e18" stroke-width="4"/>
+  <text x="200" y="380" font-family="sans-serif" font-size="16" fill="#e9d3cc" text-anchor="middle">Checked Flannel Shirt</text>
+</svg>

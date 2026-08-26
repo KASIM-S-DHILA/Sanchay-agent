@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#4a2f3d"/>
+  <rect x="120" y="150" width="160" height="140" rx="14" fill="#6b4258" stroke="#8a5a72" stroke-width="3"/>
+  <path d="M150 150 Q150 100 200 100 Q250 100 250 150" fill="none" stroke="#8a5a72" stroke-width="8"/>
+  <rect x="185" y="195" width="30" height="22" rx="4" fill="#4a2f3d" stroke="#8a5a72" stroke-width="2"/>
+  <text x="200" y="330" font-family="sans-serif" font-size="16" fill="#e3cdd9" text-anchor="middle">Bags &amp; Accessories</text>
+</svg>

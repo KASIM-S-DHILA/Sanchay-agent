@@ -16,7 +16,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 79900,
     category: "Tees",
     stock: 50,
-    image_url: null,
+    image_url: "/products/tee-black-001.svg",
   },
   {
     sku: "TEE-WHITE-002",
@@ -25,7 +25,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 89900,
     category: "Tees",
     stock: 50,
-    image_url: null,
+    image_url: "/products/tee-white-002.svg",
   },
   {
     sku: "TEE-BLUE-003",
@@ -34,7 +34,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 84900,
     category: "Tees",
     stock: 50,
-    image_url: null,
+    image_url: "/products/tee-blue-003.svg",
   },
   {
     sku: "HOODIE-GRAY-001",
@@ -43,7 +43,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 199900,
     category: "Hoodies",
     stock: 50,
-    image_url: null,
+    image_url: "/products/hoodie-gray-001.svg",
   },
   {
     sku: "HOODIE-BLACK-002",
@@ -52,7 +52,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 219900,
     category: "Hoodies",
     stock: 50,
-    image_url: null,
+    image_url: "/products/hoodie-black-002.svg",
   },
   {
     sku: "JACKET-WARM-001",
@@ -61,7 +61,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 499900,
     category: "Jackets",
     stock: 50,
-    image_url: null,
+    image_url: "/products/jacket-warm-001.svg",
   },
   {
     sku: "JACKET-DENIM-001",
@@ -70,7 +70,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 259900,
     category: "Jackets",
     stock: 50,
-    image_url: null,
+    image_url: "/products/jacket-denim-001.svg",
   },
   {
     sku: "SHIRT-WHITE-001",
@@ -79,7 +79,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 149900,
     category: "Shirts",
     stock: 50,
-    image_url: null,
+    image_url: "/products/shirt-white-001.svg",
   },
   {
     sku: "SHIRT-FLANNEL-001",
@@ -88,7 +88,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 179900,
     category: "Shirts",
     stock: 50,
-    image_url: null,
+    image_url: "/products/shirt-flannel-001.svg",
   },
   {
     sku: "JEANS-SLIM-001",
@@ -97,7 +97,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 229900,
     category: "Pants",
     stock: 50,
-    image_url: null,
+    image_url: "/products/jeans-slim-001.svg",
   },
   {
     sku: "PANTS-CARGO-001",
@@ -106,7 +106,7 @@ export const CATALOG: CatalogProduct[] = [
     price: 209900,
     category: "Pants",
     stock: 50,
-    image_url: null,
+    image_url: "/products/pants-cargo-001.svg",
   },
   {
     sku: "SNEAKERS-WHITE-001",
@@ -115,6 +115,6 @@ export const CATALOG: CatalogProduct[] = [
     price: 299900,
     category: "Shoes",
     stock: 50,
-    image_url: null,
+    image_url: "/products/sneakers-white-001.svg",
   },
 ];

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#3f6b95"/>
+  <path d="M120 100 L155 70 L245 70 L280 100 L290 150 L255 170 L250 340 L150 340 L145 170 L110 150 Z" fill="#4f80ad" stroke="#376a94" stroke-width="3"/>
+  <line x1="200" y1="80" x2="200" y2="335" stroke="#376a94" stroke-width="3"/>
+  <text x="200" y="380" font-family="sans-serif" font-size="16" fill="#e6f0f8" text-anchor="middle">Denim Jacket</text>
+</svg>

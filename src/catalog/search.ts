@@ -33,10 +33,10 @@ export async function searchProducts(env: Env, query: string, topK: number = 5):
           if (!id) continue;
           const score = match.score ?? 0;
           const row = await env.DB.prepare(
-            `SELECT id, name, description, price, category, stock FROM products WHERE id = ?`
+            `SELECT id, name, description, price, category, stock, image_url FROM products WHERE id = ?`
           )
             .bind(id)
-            .first<{ id: string; name: string; description: string; price: number; category: string; stock: number }>();
+            .first<{ id: string; name: string; description: string; price: number; category: string; stock: number; image_url: string | null }>();
           if (row) {
             results.push({
               productId: row.id,
@@ -45,6 +45,7 @@ export async function searchProducts(env: Env, query: string, topK: number = 5):
               price: row.price,
               category: row.category,
               stock: row.stock,
+              image_url: row.image_url,
               score,
             });
           }
@@ -78,10 +79,10 @@ async function fallbackSearch(env: Env, query: string, topK: number): Promise<Pr
     if (words.length <= 1) {
       const likePattern = `%${escapeLike(query)}%`;
       const result = await env.DB.prepare(
-        `SELECT id, name, description, price, category, stock FROM products WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' LIMIT ?`
+        `SELECT id, name, description, price, category, stock, image_url FROM products WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' LIMIT ?`
       )
         .bind(likePattern, likePattern, topK)
-        .all<{ id: string; name: string; description: string; price: number; category: string; stock: number }>();
+        .all<{ id: string; name: string; description: string; price: number; category: string; stock: number; image_url: string | null }>();
       const rows = result.results ?? [];
       return rows.map((row) => ({
         productId: row.id,
@@ -90,6 +91,7 @@ async function fallbackSearch(env: Env, query: string, topK: number): Promise<Pr
         price: row.price,
         category: row.category,
         stock: row.stock,
+        image_url: row.image_url,
         score: 0,
       }));
     }
@@ -99,7 +101,7 @@ async function fallbackSearch(env: Env, query: string, topK: number): Promise<Pr
     const searchWords = filteredWords.length > 0 ? filteredWords : words;
 
     const conditions = searchWords.map(() => `(name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')`).join(" OR ");
-    const sql = `SELECT id, name, description, price, category, stock FROM products WHERE ${conditions} LIMIT ?`;
+    const sql = `SELECT id, name, description, price, category, stock, image_url FROM products WHERE ${conditions} LIMIT ?`;
     const params: any[] = [];
     for (const w of searchWords) {
       const pat = `%${escapeLike(w)}%`;
@@ -109,17 +111,17 @@ async function fallbackSearch(env: Env, query: string, topK: number): Promise<Pr
 
     const result = await env.DB.prepare(sql)
       .bind(...params)
-      .all<{ id: string; name: string; description: string; price: number; category: string; stock: number }>();
+      .all<{ id: string; name: string; description: string; price: number; category: string; stock: number; image_url: string | null }>();
 
     const rows = result.results ?? [];
     // If word-based still returns 0, fallback to whole-query LIKE as last resort
     if (rows.length === 0) {
       const likePattern = `%${escapeLike(query)}%`;
       const fallback = await env.DB.prepare(
-        `SELECT id, name, description, price, category, stock FROM products WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' LIMIT ?`
+        `SELECT id, name, description, price, category, stock, image_url FROM products WHERE name LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\' LIMIT ?`
       )
         .bind(likePattern, likePattern, topK)
-        .all<{ id: string; name: string; description: string; price: number; category: string; stock: number }>();
+        .all<{ id: string; name: string; description: string; price: number; category: string; stock: number; image_url: string | null }>();
       const fbRows = fallback.results ?? [];
       return fbRows.map((row) => ({
         productId: row.id,
@@ -128,6 +130,7 @@ async function fallbackSearch(env: Env, query: string, topK: number): Promise<Pr
         price: row.price,
         category: row.category,
         stock: row.stock,
+        image_url: row.image_url,
         score: 0,
       }));
     }
@@ -139,6 +142,7 @@ async function fallbackSearch(env: Env, query: string, topK: number): Promise<Pr
       price: row.price,
       category: row.category,
       stock: row.stock,
+      image_url: row.image_url,
       score: 0,
     }));
   } catch (e) {

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#22334f"/>
+  <path d="M150 70 L250 70 L260 340 L215 340 L200 180 L185 340 L140 340 Z" fill="#2e4468" stroke="#3f5c86" stroke-width="3"/>
+  <text x="200" y="380" font-family="sans-serif" font-size="16" fill="#c9d8ec" text-anchor="middle">Slim Fit Jeans</text>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#f2f2f2"/>
+  <path d="M135 70 L200 100 L265 70 L295 105 L265 135 L250 122 L250 340 L150 340 L150 122 L135 135 L105 105 Z" fill="#ffffff" stroke="#d0d0d0" stroke-width="3"/>
+  <line x1="200" y1="100" x2="200" y2="335" stroke="#d0d0d0" stroke-width="2"/>
+  <text x="200" y="380" font-family="sans-serif" font-size="16" fill="#555555" text-anchor="middle">Formal White Shirt</text>
+</svg>

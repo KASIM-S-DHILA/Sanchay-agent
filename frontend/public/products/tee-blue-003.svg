@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#132a4d"/>
+  <path d="M140 60 L260 60 L300 110 L260 140 L245 120 L245 340 L155 340 L155 120 L140 140 L100 110 Z" fill="#1e3f70" stroke="#2c5490" stroke-width="3"/>
+  <text x="200" y="380" font-family="sans-serif" font-size="16" fill="#c9d8ec" text-anchor="middle">Navy Blue Tee</text>
+</svg>

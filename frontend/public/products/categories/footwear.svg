@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#4a3f2f"/>
+  <path d="M90 260 Q120 220 170 220 L230 210 Q270 205 300 230 L310 260 Q310 280 290 285 L110 285 Q90 280 90 260 Z" fill="#6b5a42" stroke="#8a7554" stroke-width="3"/>
+  <path d="M170 220 L230 210 L245 240 L175 248 Z" fill="#a0855e" stroke="#8a7554" stroke-width="2"/>
+  <text x="200" y="330" font-family="sans-serif" font-size="16" fill="#e0d5c0" text-anchor="middle">Footwear</text>
+</svg>

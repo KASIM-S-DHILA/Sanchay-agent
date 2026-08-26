@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#0d0d0d"/>
+  <path d="M130 90 Q200 40 270 90 L300 130 L265 155 L250 130 L250 340 L150 340 L150 130 L135 155 L100 130 Z" fill="#232323" stroke="#3a3a3a" stroke-width="3"/>
+  <line x1="200" y1="100" x2="200" y2="335" stroke="#3a3a3a" stroke-width="3"/>
+  <text x="200" y="380" font-family="sans-serif" font-size="16" fill="#bdbdbd" text-anchor="middle">Black Zip Hoodie</text>
+</svg>

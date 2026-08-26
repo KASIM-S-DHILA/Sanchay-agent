@@ -30,5 +30,17 @@ export async function seedCatalog(env: Env): Promise<void> {
     )
       .bind(product.sku, product.name, product.description, pricePaise, product.category, stock, imageUrl, null)
       .run();
+
+    // INSERT OR IGNORE is a no-op for products that already exist, so a
+    // re-seed (e.g. after adding curated images) would never update their
+    // image_url. Only image_url is safe to backfill here — price/stock are
+    // live commerce state and must not be clobbered by a reseed.
+    if (imageUrl) {
+      await env.DB.prepare(
+        `UPDATE products SET image_url = ? WHERE id = ? AND (image_url IS NULL OR image_url != ?)`
+      )
+        .bind(imageUrl, product.sku, imageUrl)
+        .run();
+    }
   }
 }
