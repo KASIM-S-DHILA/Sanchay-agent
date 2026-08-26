@@ -25,26 +25,40 @@ export async function handleRazorpayWebhook(request: Request, env: Env): Promise
       const orderId = event.payload.payment.entity.order_id;
       const amount = event.payload.payment.entity.amount;
 
+      // Razorpay explicitly documents that webhook delivery is retried on
+      // failure/timeout, so this handler MUST be idempotent against
+      // receiving the same payment.captured event more than once. Stock is
+      // decremented atomically at order-creation time (checkoutCart), not
+      // here — this handler only needs to guard against double-marking the
+      // order paid / double-writing purchase history on a duplicate
+      // delivery for an order that's already settled.
+      const orderRow: any = await env.DB.prepare(
+        "SELECT session_id, items_json, status FROM orders WHERE razorpay_order_id = ?",
+      )
+        .bind(orderId)
+        .first();
+
+      if (orderRow?.status === "paid") {
+        await logApiCall(env, {
+          sessionId: orderRow.session_id ?? null,
+          endpoint: "/webhooks/razorpay",
+          method: "POST",
+          params: { paymentId, orderId, duplicate_delivery: true },
+          response: { amount, status: "paid" },
+          status: "ok",
+          durationMs: 0,
+        });
+        return json({ success: true, data: { status: "ok", note: "duplicate delivery — already processed" } });
+      }
+
       await env.DB.prepare("UPDATE orders SET status = 'paid' WHERE razorpay_order_id = ?")
         .bind(orderId)
         .run();
 
-      const orderRow: any = await env.DB.prepare(
-        "SELECT session_id, items_json FROM orders WHERE razorpay_order_id = ?",
-      )
-        .bind(orderId)
-        .first();
       const sessionId = orderRow?.session_id ?? null;
 
       if (sessionId && orderRow.items_json) {
         const items = JSON.parse(orderRow.items_json) as { productId: string; quantity: number }[];
-
-        // Decrement stock for each purchased item (clamped at zero)
-        for (const item of items) {
-          await env.DB.prepare("UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?")
-            .bind(item.quantity, item.productId)
-            .run();
-        }
 
         // Purchase history → user_preferences
         const productIds = items.map((i) => i.productId).filter(Boolean);
