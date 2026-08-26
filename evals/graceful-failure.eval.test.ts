@@ -60,7 +60,9 @@ describe("Graceful failure: out-of-stock add", () => {
 
     // Audit trail shows the failed call
     const events = (await (
-      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`)
+      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`, {
+        headers: { "x-session-id": sessionId },
+      })
     ).json() as any).data.events;
     const failedAdd = events.find((e: any) => e.endpoint === "/api/cart/add" && e.status === "error");
     expect(failedAdd).toBeDefined();
@@ -93,7 +95,9 @@ describe("Graceful failure: stock vanishes between add and checkout", () => {
 
     // Audit shows the blocked checkout
     const events = (await (
-      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`)
+      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`, {
+        headers: { "x-session-id": sessionId },
+      })
     ).json() as any).data.events;
     const failedCheckout = events.find(
       (e: any) => e.endpoint === "/api/checkout" && e.status === "error",

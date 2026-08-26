@@ -16,6 +16,7 @@ export async function bootstrapSchema(db: any): Promise<void> {
       product_name TEXT NOT NULL, price INTEGER NOT NULL,
       quantity INTEGER NOT NULL DEFAULT 1, added_at TEXT NOT NULL)`,
     `CREATE INDEX IF NOT EXISTS idx_cart_session ON cart_items(session_id)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_cart_session_product ON cart_items(session_id, product_id)`,
     `CREATE TABLE IF NOT EXISTS api_call_log (
       id TEXT PRIMARY KEY, session_id TEXT, endpoint TEXT NOT NULL,
       method TEXT NOT NULL, params_json TEXT, response_json TEXT,
@@ -26,8 +27,13 @@ export async function bootstrapSchema(db: any): Promise<void> {
       user_id TEXT PRIMARY KEY, preferred_categories TEXT,
       budget_preference INTEGER, previous_products TEXT, purchase_history TEXT,
       session_count INTEGER DEFAULT 0, last_active TEXT, updated_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS idempotency_keys (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, endpoint TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL, status_code INTEGER NOT NULL,
+      response_json TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_unique ON idempotency_keys(session_id, endpoint, idempotency_key)`,
   ];
   for (const stmt of statements) {
-    await db.prepare(stmt).run().catch(() => {});
+    await db.prepare(stmt).run().catch(() => { });
   }
 }

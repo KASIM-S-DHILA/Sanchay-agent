@@ -2,8 +2,19 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sanchay",
   "compatibility_date": "2026-07-08",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "main": "./src/index.ts",
+  "rules": [
+    {
+      "type": "Text",
+      "globs": [
+        "**/*.yaml"
+      ],
+      "fallthrough": true
+    }
+  ],
   "assets": {
     "directory": "./frontend/dist",
     "binding": "ASSETS",
@@ -27,5 +38,14 @@
   ],
   "observability": {
     "enabled": true
+  },
+  // Non-secret config. MERCHANT_MAX_ORDER_PAISE caps any single order
+  // regardless of session/caller-declared budget (see checkoutCart in
+  // src/api/logic.ts) — falls back to a hardcoded default if omitted.
+  // ADMIN_TOKEN gates /admin/* and /api/audit — set via
+  // `wrangler secret put ADMIN_TOKEN` in production; if unset those
+  // endpoints reject every request (see middleware/adminAuth.ts).
+  "vars": {
+    "MERCHANT_MAX_ORDER_PAISE": "5000000"
   }
 }

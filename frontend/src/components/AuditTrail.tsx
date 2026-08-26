@@ -27,7 +27,9 @@ export function AuditTrail({
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`/api/audit?session_id=${encodeURIComponent(sessionId)}`);
+      const res = await fetch(`/api/audit?session_id=${encodeURIComponent(sessionId)}`, {
+        headers: { "x-session-id": sessionId },
+      });
       if (res.status !== 200) {
         setEvents([]);
         return;

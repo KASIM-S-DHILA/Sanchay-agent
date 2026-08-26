@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { json, withApiLogging, type ApiResult } from "../middleware/audit";
+import { validateSession } from "../middleware/session";
 
 export async function handleAudit(request: Request, env: Env, url: URL): Promise<Response> {
   const sessionId = url.searchParams.get("session_id");
@@ -10,6 +11,17 @@ export async function handleAudit(request: Request, env: Env, url: URL): Promise
     async (): Promise<ApiResult> => {
       if (!sessionId) {
         return json({ success: false, error: "Missing session_id parameter" }, 400);
+      }
+
+      // Every other commerce endpoint gates access with a validated
+      // x-session-id header — the audit trail is per-session data and must
+      // follow the same rule, not just accept whatever session_id string
+      // is on the query string. The caller must present the SAME session
+      // it's asking to read the audit trail for; there is no cross-session
+      // audit read, by design.
+      const caller = await validateSession(env, request);
+      if (!caller || caller.id !== sessionId) {
+        return json({ success: false, error: "Invalid or expired session" }, 401);
       }
 
       // Webhook rows are attributed to the session at write time, so one

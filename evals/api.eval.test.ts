@@ -293,7 +293,9 @@ describe("API: Audit", () => {
     await addProduct(sessionId, "TEE-BLACK-001");
     await SELF.fetch("https://test/api/cart", { headers: { "x-session-id": sessionId } });
 
-    const res = await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`);
+    const res = await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`, {
+      headers: { "x-session-id": sessionId },
+    });
     const data: any = await res.json();
     expect(data.success).toBe(true);
 
@@ -311,7 +313,9 @@ describe("API: Audit", () => {
     await addProduct(sessionId, "FAKE-PRODUCT");
 
     const events: any = (await (
-      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`)
+      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`, {
+        headers: { "x-session-id": sessionId },
+      })
     ).json() as any).data.events;
     const failedAdd = events.find((e: any) => e.endpoint === "/api/cart/add" && e.status === "error");
     expect(failedAdd).toBeDefined();

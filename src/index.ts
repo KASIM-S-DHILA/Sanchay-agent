@@ -4,8 +4,10 @@ import { handleCartAdd, handleCartRemove, handleCartGet } from "./api/cart";
 import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
 import { handleRazorpayWebhook } from "./api/webhook";
-import { handleSeedCatalog } from "./api/admin";
+import { handleSeedCatalog, handleImportFlipkartCatalog } from "./api/admin";
+import { handleGetTools, handleOpenApiSpec } from "./api/tools";
 import { handleVoiceWebSocket } from "./voice/bridge";
+import { checkAdminToken } from "./middleware/adminAuth";
 import type { Env } from "./types";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -46,6 +48,10 @@ export default {
         response = await handleOrderStatus(request, env, url);
       } else if (url.pathname === "/api/audit" && request.method === "GET") {
         response = await handleAudit(request, env, url);
+      } else if (url.pathname === "/api/tools" && request.method === "GET") {
+        response = await handleGetTools(request, env);
+      } else if (url.pathname === "/openapi.yaml" && request.method === "GET") {
+        response = await handleOpenApiSpec(request, env);
       } else if (url.pathname === "/webhooks/razorpay" && request.method === "POST") {
         response = await handleRazorpayWebhook(request, env);
       } else if (url.pathname === "/voice" && request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -54,7 +60,9 @@ export default {
       } else if (url.pathname === "/voice") {
         response = await handleVoiceWebSocket(request, env);
       } else if (url.pathname === "/admin/seed-catalog" && request.method === "POST") {
-        response = await handleSeedCatalog(request, env);
+        response = checkAdminToken(env, request) ?? (await handleSeedCatalog(request, env));
+      } else if (url.pathname === "/admin/import-flipkart" && request.method === "POST") {
+        response = checkAdminToken(env, request) ?? (await handleImportFlipkartCatalog(request, env, url));
       } else {
         // Frontend SPA
         response = await env.ASSETS.fetch(request);
