@@ -59,6 +59,10 @@ export default {
         response = await env.ASSETS.fetch(request);
       }
 
+      // WebSocket upgrade (101) must pass through untouched — reconstructing
+      // a Response drops the webSocket property and throws
+      if (response.status === 101) return response;
+
       // CORS on every response — Sarvam tool calls come from Sarvam's servers,
       // frontend polls come from the browser
       const headers = new Headers(response.headers);
