@@ -11,7 +11,7 @@ export async function handleCartAdd(request: Request, env: Env): Promise<Respons
   let body: { product_id?: string; productId?: string; quantity?: number | string } = {};
   try {
     body = await request.json();
-  } catch {}
+  } catch { }
 
   // Accept both snake_case and camelCase — Sarvam LLM emits either
   const productId = body.product_id ?? body.productId;
@@ -19,15 +19,16 @@ export async function handleCartAdd(request: Request, env: Env): Promise<Respons
     return Response.json({ success: false, error: "product_id is required" }, { status: 400 });
   }
 
-  let qty: number | undefined;
-  if (body.quantity != null && body.quantity !== "") {
-    const n = Number(body.quantity);
-    if (!Number.isInteger(n) || n < 1 || n > 99) {
-      return Response.json({ success: false, error: "quantity must be an integer 1-99" }, { status: 400 });
-    }
-    qty = n;
-  }
-  const result = await addToCart(env, session.id, productId, qty ?? 1);
+  // Optional idempotency key — a client-supplied retry token (e.g. an LLM
+  // tool-call timeout retry) replays the original result instead of adding
+  // the item twice. Accepted via header (REST convention) or body (Sarvam
+  // tool params can't set custom headers).
+  const idempotencyKey =
+    request.headers.get("Idempotency-Key") ?? (body as any).idempotency_key ?? undefined;
+
+  // Quantity range/integer validation happens inside addToCart, so HTTP and
+  // voice tool calls get identical enforcement from one place.
+  const result = await addToCart(env, session.id, productId, body.quantity, idempotencyKey);
   return Response.json(result.body, { status: result.status });
 }
 
@@ -40,22 +41,16 @@ export async function handleCartRemove(request: Request, env: Env): Promise<Resp
   let body: { product_id?: string; productId?: string; quantity?: number | string } = {};
   try {
     body = await request.json();
-  } catch {}
+  } catch { }
 
   const productId = body.product_id ?? body.productId;
   if (!productId) {
     return Response.json({ success: false, error: "product_id is required" }, { status: 400 });
   }
 
-  let qty: number | undefined;
-  if (body.quantity != null && body.quantity !== "") {
-    const n = Number(body.quantity);
-    if (!Number.isInteger(n) || n < 1 || n > 99) {
-      return Response.json({ success: false, error: "quantity must be an integer 1-99" }, { status: 400 });
-    }
-    qty = n;
-  }
-  const result = await removeFromCart(env, session.id, productId, qty);
+  // Quantity range/integer validation happens inside removeFromCart, so HTTP
+  // and voice tool calls get identical enforcement from one place.
+  const result = await removeFromCart(env, session.id, productId, body.quantity);
   return Response.json(result.body, { status: result.status });
 }
 

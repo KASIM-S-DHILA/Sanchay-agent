@@ -20,23 +20,24 @@ export async function executeToolCall(
   switch (toolName) {
     case "search_catalog":
       return (await logic.searchCatalog(env, sessionId, String(params.query ?? ""))).body;
-    case "add_to_cart": {
-      const qty = Number(params.quantity);
+    case "add_to_cart":
+      // Quantity range/integer validation happens inside addToCart, so
+      // voice calls get identical enforcement to the HTTP cart routes.
+      // idempotency_key lets Sarvam safely retry a tool call that timed out
+      // without double-adding the item.
       return (
-        await logic.addToCart(env, sessionId, String(params.product_id), Number.isFinite(qty) ? qty : 1)
-      ).body;
-    }
-    case "remove_from_cart": {
-      const qty = Number(params.quantity);
-      return (
-        await logic.removeFromCart(
+        await logic.addToCart(
           env,
           sessionId,
           String(params.product_id),
-          Number.isFinite(qty) ? qty : undefined,
+          params.quantity,
+          params.idempotency_key ? String(params.idempotency_key) : undefined,
         )
       ).body;
-    }
+    case "remove_from_cart":
+      return (
+        await logic.removeFromCart(env, sessionId, String(params.product_id), params.quantity)
+      ).body;
     case "get_cart":
       return (await logic.getCart(env, sessionId)).body;
     case "checkout":
@@ -52,7 +53,7 @@ export async function executeToolCall(
 
 export const VOICE_TOOLS = [
   { name: "search_catalog", params: ["query"] },
-  { name: "add_to_cart", params: ["product_id", "quantity?"] },
+  { name: "add_to_cart", params: ["product_id", "quantity?", "idempotency_key?"] },
   { name: "remove_from_cart", params: ["product_id", "quantity?"] },
   { name: "get_cart", params: [] },
   { name: "checkout", params: [] },
