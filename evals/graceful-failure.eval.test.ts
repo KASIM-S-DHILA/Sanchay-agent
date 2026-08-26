@@ -1,182 +1,109 @@
-import type { Unstable_DevWorker } from "wrangler";
-import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { unstable_dev } from "wrangler";
+import { SELF } from "cloudflare:test";
+import { describe, it, expect, beforeAll } from "vitest";
+import { seedCatalog } from "../src/catalog/seed";
+import { bootstrapSchema } from "./helpers/bootstrap";
 
-let worker: Unstable_DevWorker;
+let env: any;
+const START = "https://test/api/session/start";
 
-function connect(session: string): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(
-      `ws://${worker.address}:${worker.port}/agents/sanchay-agent/${session}`,
-    );
-    ws.addEventListener("open", () => setTimeout(() => resolve(ws), 400));
-    ws.addEventListener("error", () => reject(new Error("ws error")));
-    setTimeout(() => reject(new Error("open timeout")), 15000);
+async function startSession(body: Record<string, unknown> = {}): Promise<string> {
+  const res = await SELF.fetch(START, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
+  const json: any = await res.json();
+  return json.data.sessionId;
 }
 
-function sendChat(ws: WebSocket, text: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`WS timeout: ${text}`)), 30000);
-    const handler = (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(String(event.data));
-        if (data.type === "chat") {
-          clearTimeout(timeout);
-          ws.removeEventListener("message", handler);
-          resolve(data);
-        }
-      } catch {}
-    };
-    ws.addEventListener("message", handler);
-    ws.send(JSON.stringify({ type: "chat", content: text }));
+async function addProduct(sessionId: string, productId: string, quantity = 1) {
+  return (
+    await SELF.fetch("https://test/api/cart/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-session-id": sessionId },
+      body: JSON.stringify({ product_id: productId, quantity }),
+    })
+  ).json();
+}
+
+async function checkout(sessionId: string) {
+  const res = await SELF.fetch("https://test/api/checkout", {
+    method: "POST",
+    headers: { "x-session-id": sessionId },
   });
+  return res.json() as Promise<any>;
 }
 
-async function audit(sid: string): Promise<any[]> {
-  const res = await worker.fetch(`http://example.com/audit?sid=${encodeURIComponent(sid)}`);
-  const data: any = await res.json();
-  return data.events ?? [];
-}
+beforeAll(async () => {
+  const mod: any = await import("cloudflare:test");
+  env = mod.env;
+  await bootstrapSchema(env.DB);
+  await seedCatalog(env);
+});
 
-const DEV_VARS_PATH = ".dev.vars";
-
-describe("Graceful failure: out-of-stock product", () => {
-  const sid = `oos-${Date.now()}`;
-  let ws: WebSocket;
-
-  beforeAll(async () => {
-    worker = await unstable_dev("src/index.ts", {
-      config: "wrangler.jsonc",
-      experimental: { disableExperimentalWarning: true },
-    });
-    for (let i = 0; i < 30; i++) {
-      try {
-        const r = await worker.fetch("http://example.com/healthz");
-        if (r.status === 200) break;
-      } catch {}
-      await new Promise((r) => setTimeout(r, 500));
-    }
+describe("Graceful failure: out-of-stock add", () => {
+  it("add fails with Out of stock, audit logs the error", async () => {
+    const sessionId = await startSession();
     // Zero the stock
-    execSync(
-      `npx wrangler d1 execute sanchay-db --local --command "UPDATE products SET stock = 0 WHERE id = 'TEE-BLACK-001'" --json`,
-      { stdio: "ignore" },
-    );
-    ws = await connect(sid);
-    await new Promise<void>((resolve) => {
-      const h = (e: MessageEvent) => {
-        try {
-          const d = JSON.parse(String(e.data));
-          if (d.type === "connected") { ws.removeEventListener("message", h); resolve(); }
-        } catch {}
-      };
-      ws.addEventListener("message", h);
-      ws.send(JSON.stringify({ type: "init", email: "oos-test@example.com" }));
+    await env.DB.prepare("UPDATE products SET stock = 0 WHERE id = 'TEE-BLACK-001'").run();
+
+    const data: any = await addProduct(sessionId, "TEE-BLACK-001");
+    expect(data.success).toBe(false);
+    expect(data.error).toBe("Out of stock");
+
+    // Cart untouched
+    const cartRes = await SELF.fetch("https://test/api/cart", {
+      headers: { "x-session-id": sessionId },
     });
-  }, 90_000);
+    const cartData: any = await cartRes.json();
+    expect(cartData.data.items.length).toBe(0);
 
-  afterAll(async () => {
-    // Restore stock to 50
-    try {
-      execSync(
-        `npx wrangler d1 execute sanchay-db --local --command "UPDATE products SET stock = 50 WHERE id = 'TEE-BLACK-001'" --json`,
-        { stdio: "ignore" },
-      );
-    } catch {}
-    ws?.close();
-    await worker?.stop();
-  });
+    // Audit trail shows the failed call
+    const events = (await (
+      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`)
+    ).json() as any).data.events;
+    const failedAdd = events.find((e: any) => e.endpoint === "/api/cart/add" && e.status === "error");
+    expect(failedAdd).toBeDefined();
 
-  it("out-of-stock handled gracefully end-to-end", async () => {
-    // 1+2. Executor returns failed action; narrator explains (not "added")
-    const res = await sendChat(ws, "add the black tee");
-    expect(res.content).not.toMatch(/i've added|i have added|added to your cart/i);
-    expect(res.content).toMatch(/out of stock|unavailable|sorry/i);
-
-    // 3. Claim-check passed — the failure claim matches the failure fact
-    const events = await audit(sid);
-    const claimFailures = events.filter((e) => e.action === "claim_check.failed");
-    expect(claimFailures.length).toBe(0);
-    expect(events.some((e) => e.action === "claim_check.passed")).toBe(true);
-
-    // 4. Cart unchanged (no tee in it)
-    expect(res.cart.some((c: any) => c.productId === "TEE-BLACK-001")).toBe(false);
-
-    // 5. Audit trail shows the failed executor action
-    const execEvent = events.find((e) => e.action === "executor.executed");
-    expect(execEvent).toBeDefined();
-    expect(execEvent.status).toBe("partial");
-    expect(String(execEvent.reason)).toContain("add:false");
+    // Restore
+    await env.DB.prepare("UPDATE products SET stock = 50 WHERE id = 'TEE-BLACK-001'").run();
   });
 });
 
-// ponytail: local dev reads secrets from .dev.vars which overrides `vars`,
-// so simulating bad Razorpay keys requires swapping that file. Gated behind
-// RUN_GATEWAY_FAILURE=1 and run ALONE (`npx vitest run evals/graceful-failure`)
-// so no concurrent pool reads the mutated file.
-describe.skipIf(process.env.RUN_GATEWAY_FAILURE !== "1")(
-  "Graceful failure: Razorpay gateway error",
-  () => {
-    const sid = `gw-fail-${Date.now()}`;
-    let ws: WebSocket;
-    let original: string;
+describe("Graceful failure: stock vanishes between add and checkout", () => {
+  let sessionId: string;
 
-    beforeAll(async () => {
-      original = readFileSync(DEV_VARS_PATH, "utf8");
-      const broken = `${original}\nRAZORPAY_KEY_ID=invalid_key_override\nRAZORPAY_KEY_SECRET=invalid_secret_override`;
-      writeFileSync(DEV_VARS_PATH, broken);
+  beforeAll(async () => {
+    sessionId = await startSession();
+    await addProduct(sessionId, "HOODIE-GRAY-001"); // stock > 0 at add time
+    await env.DB.prepare("UPDATE products SET stock = 0 WHERE id = 'HOODIE-GRAY-001'").run();
+  });
 
-      worker = await unstable_dev("src/index.ts", {
-        config: "wrangler.jsonc",
-        experimental: { disableExperimentalWarning: true },
-      });
-      for (let i = 0; i < 30; i++) {
-        try {
-          const r = await worker.fetch("http://example.com/healthz");
-          if (r.status === 200) break;
-        } catch {}
-        await new Promise((r) => setTimeout(r, 500));
-      }
-      ws = await connect(sid);
-      await new Promise<void>((resolve) => {
-        const h = (e: MessageEvent) => {
-          try {
-            const d = JSON.parse(String(e.data));
-            if (d.type === "connected") { ws.removeEventListener("message", h); resolve(); }
-          } catch {}
-        };
-        ws.addEventListener("message", h);
-        ws.send(JSON.stringify({ type: "init", email: "gw-fail@example.com" }));
-      });
-      await sendChat(ws, "add the black tee");
-      await sendChat(ws, "checkout");
-    }, 120_000);
+  it("checkout re-validates stock, removes the item, and reports unavailability", async () => {
+    const data: any = await checkout(sessionId);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("no longer available");
 
-    afterAll(async () => {
-      writeFileSync(DEV_VARS_PATH, original);
-      ws?.close();
-      await worker?.stop();
+    // Item was removed from the cart by the checkout re-validation
+    const cartRes = await SELF.fetch("https://test/api/cart", {
+      headers: { "x-session-id": sessionId },
     });
+    const cartData: any = await cartRes.json();
+    expect(cartData.data.items.some((i: any) => i.productId === "HOODIE-GRAY-001")).toBe(false);
 
-    it("gateway failure → checkout_initiated:false, armed retained, audited", async () => {
-      const res = await sendChat(ws, "yes");
+    // Audit shows the blocked checkout
+    const events = (await (
+      await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`)
+    ).json() as any).data.events;
+    const failedCheckout = events.find(
+      (e: any) => e.endpoint === "/api/checkout" && e.status === "error",
+    );
+    expect(failedCheckout).toBeDefined();
+  });
+});
 
-      // 1. Executor returned a failed checkout
-      const initiated = res.executor?.actions?.find((a: any) => a.type === "checkout_initiated");
-      expect(initiated?.success).toBe(false);
 
-      // 2. Narrator explains rather than claiming success
-      expect(res.content).not.toMatch(/payment link is ready|here's your link/i);
 
-      // 3. confirmArmed stays true (retryable)
-      expect(res.executor?.stateChanges?.confirmArmed).toBe(true);
 
-      // 4. Audit trail shows the failure
-      const events = await audit(sid);
-      const checkout = events.find((e) => e.action === "checkout.executed");
-      expect(checkout?.status).toBe("failed");
-    });
-  },
-);
+
+

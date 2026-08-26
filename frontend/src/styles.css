@@ -179,3 +179,23 @@ button:disabled {
 .badge-do { background: #1d3a6b; color: #9ec1ff; }
 .badge-d1 { background: #3a2d1d; color: #ffd39e; }
 .audit-reason { color: var(--muted); font-size: 0.75rem; }
+
+.session-start { display: flex; gap: 8px; align-items: center; }
+.session-id { color: var(--muted); }
+.voice-container { padding: 12px; border-bottom: 1px solid var(--border); }
+.sarvam-widget-container { min-height: 60px; }
+.cart-display { padding: 12px; }
+.cart-display ul { list-style: none; margin: 0; padding: 0; }
+.cart-display li { border-bottom: 1px solid var(--border); padding: 6px 0; }
+.cart-total { padding-top: 8px; }
+.budget-left { color: var(--muted); font-size: 0.85rem; }
+.order-status { margin-top: 10px; color: var(--accent); }
+.audit-entry { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; padding: 8px; }
+.audit-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.audit-duration { color: var(--muted); font-size: 0.75rem; }
+.badge { border-radius: 4px; display: inline-block; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em; padding: 1px 6px; }
+.badge-ok { background: #16321f; color: #7ee2a0; }
+.badge-error { background: #3a1d1d; color: #ff9e9e; }
+.badge-blocked { background: #3a331d; color: #ffd39e; }
+.audit-entry pre { background: #10131a; border-radius: 6px; font-size: 0.7rem; overflow-x: auto; padding: 6px; }
+.audit-entry summary { color: var(--muted); cursor: pointer; font-size: 0.75rem; }

@@ -1,12 +1,9 @@
 import type { Env } from "../types";
-import type { AIProvider } from "../llm/provider";
-import { WorkersAIProvider } from "../llm/workers-ai-provider";
 
 const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
 const BATCH_SIZE = 10;
 
-export async function embedProducts(env: Env, provider?: AIProvider): Promise<void> {
-  const aiProvider = provider ?? new WorkersAIProvider(env.AI);
+export async function embedProducts(env: Env): Promise<void> {
   // Fetch products needing embeddings
   const result = await env.DB.prepare(
     `SELECT id, name, description, category, price FROM products WHERE embedding_id IS NULL`
@@ -22,7 +19,16 @@ export async function embedProducts(env: Env, provider?: AIProvider): Promise<vo
 
     let vectors: number[][] | null = null;
     try {
-      vectors = await aiProvider.embed(EMBED_MODEL, texts);
+      const embeddingResponse: any = await env.AI.run(EMBED_MODEL, { text: texts });
+
+      if (embeddingResponse?.data && Array.isArray(embeddingResponse.data)) {
+        const d = embeddingResponse.data;
+        if (Array.isArray(d[0])) vectors = d as number[][];
+        else vectors = [d as number[]];
+      } else if (embeddingResponse?.embeddings && Array.isArray(embeddingResponse.embeddings)) {
+        vectors = embeddingResponse.embeddings as number[][];
+      }
+
       if (!vectors || vectors.length === 0) {
         console.warn(`No vectors returned for chunk ${i / BATCH_SIZE}, skipping`);
         continue;

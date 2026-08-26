@@ -3,31 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:worker": "wrangler dev",
+    "dev": "wrangler dev",
     "dev:frontend": "npm run dev --prefix frontend",
-    "dev": "concurrently -n worker,web -c blue,green \"wrangler dev\" \"npm run dev --prefix frontend\"",
-    "build:frontend": "npm run build --prefix frontend",
-    "deploy": "npm run build:frontend && wrangler deploy",
+    "build": "npm run build --prefix frontend",
+    "deploy": "npm run build && wrangler deploy",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "agents": "^0.21.0",
-    "jose": "^6.2.10"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "@cloudflare/workers-types": "^5.20260825.1",
+    "@cloudflare/workers-types": "^5.20260826.1",
     "@types/node": "^26.3.0",
-    "concurrently": "^10.0.5",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
-    "wrangler": "^4.125.0"
-  },
-  "allowScripts": {
-    "esbuild@0.28.1": true,
-    "esbuild@0.28.2": true,
-    "workerd@1.20260815.1": true,
-    "workerd@1.20260820.1": true,
-    "core-js-pure@3.50.0": true
+    "wrangler": "^4.126.0"
   }
 }

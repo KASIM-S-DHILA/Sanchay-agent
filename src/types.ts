@@ -1,21 +1,12 @@
-// Agent state — persisted per-session via this.setState()
-export interface UserPreferences {
-  preferredCategories: string[];
-  budgetPreference: number | null;
-  previousProducts: string[];
-  purchaseHistory: string[];
-  sessionCount: number;
-  lastActive: string | null;
-}
-
-export interface AgentState {
-  cart: CartItem[];
-  history: TurnRecord[];
-  lastDiscussedProductId: string | null;
-  pendingIntent: PendingIntent | null;
-  confirmArmed: boolean;
-  sessionMeta: { userId: string; expiresAt: string } | null;
-  userPreferences: UserPreferences | null; // null until loaded from D1
+export interface Env {
+  AI: Ai;
+  DB: D1Database;
+  VECTOR_INDEX: VectorizeIndex;
+  ASSETS: Fetcher;
+  RAZORPAY_KEY_ID: string;
+  RAZORPAY_KEY_SECRET: string;
+  RAZORPAY_WEBHOOK_SECRET: string;
+  SARVAM_API_KEY: string;
 }
 
 export interface CartItem {
@@ -23,59 +14,6 @@ export interface CartItem {
   name: string;
   price: number; // paise
   quantity: number;
-}
-
-export interface TurnRecord {
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string;
-  actions?: string[];
-}
-
-export interface PendingIntent {
-  type: "confirm" | "cancel";
-  budgetValue?: number;
-  span?: string;
-}
-
-// Planner output (LLM call #1)
-export interface TurnPlan {
-  reply: string; // brief internal note, not shown to user
-  actions: TurnAction[];
-  requestConfirm: boolean;
-  requestCancel: boolean;
-  reasoning: string; // why the planner chose these actions
-}
-
-export type TurnAction =
-  | { type: "search"; query: string }
-  | { type: "add"; productId: string; quantity: number; replace?: boolean }
-  | { type: "remove"; productId: string; quantity?: number }
-  | { type: "no_action" };
-
-// Executor results — fed to the narrator
-export interface ExecutorResult {
-  actions: ExecutedAction[];
-  cart: CartItem[];
-  cartTotal: number;
-  errors: string[];
-  stateChanges: {
-    cart?: CartItem[];
-    lastDiscussedProductId?: string | null;
-    confirmArmed?: boolean;
-  };
-}
-
-export interface ExecutedAction {
-  type: string;
-  productId?: string;
-  productName?: string;
-  quantity?: number;
-  success: boolean;
-  error?: string;
-  price?: number;
-  orderId?: string;
-  paymentUrl?: string;
 }
 
 export interface ProductSearchResult {
@@ -88,15 +26,66 @@ export interface ProductSearchResult {
   score: number;
 }
 
-// Env type — matches wrangler.jsonc bindings
-export interface Env {
-  AI: Ai;
-  DB: D1Database;
-  VECTOR_INDEX: VectorizeIndex;
-  SanchayAgent: DurableObjectNamespace;
-  ASSETS: Fetcher;
-  RAZORPAY_KEY_ID: string;
-  RAZORPAY_KEY_SECRET: string;
-  RAZORPAY_WEBHOOK_SECRET: string;
-  JWT_SIGNING_KEY: string;
+export interface Session {
+  id: string;
+  userId: string | null;
+  status: string;
+  budgetPaise: number | null;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface UserPreferences {
+  preferredCategories: string[];
+  budgetPreference: number | null;
+  previousProducts: string[];
+  purchaseHistory: string[];
+  sessionCount: number;
+  lastActive: string | null;
+}
+
+export interface ApiCallLogEntry {
+  id: string;
+  sessionId: string | null;
+  endpoint: string;
+  method: string;
+  params: Record<string, unknown> | null;
+  response: Record<string, unknown> | null;
+  status: string;
+  durationMs: number;
+  createdAt: string;
+}
+
+// ---- API response shapes -------------------------------------------------
+
+export interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+export interface CartResponse {
+  items: CartItem[];
+  total: number; // paise
+  count: number; // total quantity across line items
+  budgetRemaining?: number | null; // paise, null if no budget
+}
+
+export interface CheckoutResponse {
+  orderId: string;
+  amount: number; // paise
+  paymentUrl?: string;
+  status: string;
+}
+
+export interface OrderResponse {
+  orderId: string;
+  status: string; // created | attempted | paid
+  amount: number;
+  items: CartItem[];
+}
+
+export interface SessionStartResponse {
+  sessionId: string;
+  userPreferences: UserPreferences | null;
 }

@@ -1,12 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sanchay",
-  "main": "src/index.ts",
   "compatibility_date": "2026-07-08",
   "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/index.ts",
+  "assets": {
+    "directory": "./frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
   "ai": {
-    "binding": "AI",
-    "remote": true
+    "binding": "AI"
   },
   "d1_databases": [
     {
@@ -18,33 +22,17 @@
   "vectorize": [
     {
       "binding": "VECTOR_INDEX",
-      "index_name": "sanchay-catalog",
-      "remote": true
+      "index_name": "sanchay-catalog"
     }
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "SanchayAgent",
-        "class_name": "SanchayAgent"
-      }
-    ]
-  },
+  // One-time cleanup: removes the pre-pivot SanchayAgent DO class so the
+  // pure-HTTP script can deploy. Recorded remotely after first success.
   "migrations": [
     {
-      "tag": "v2",
-      "deleted_classes": ["Cart"]
-    },
-    {
-      "tag": "v3",
-      "new_sqlite_classes": ["SanchayAgent"]
+      "tag": "v4",
+      "deleted_classes": ["SanchayAgent"]
     }
   ],
-  "assets": {
-    "directory": "./frontend/dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
-  },
   "observability": {
     "enabled": true
   }

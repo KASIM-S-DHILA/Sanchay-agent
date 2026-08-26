@@ -1,24 +1,23 @@
 import type { Env, ProductSearchResult } from "../types";
-import type { AIProvider } from "../llm/provider";
-import { WorkersAIProvider } from "../llm/workers-ai-provider";
 
 const EMBED_MODEL = "@cf/baai/bge-base-en-v1.5";
 
-export async function searchProducts(
-  env: Env,
-  query: string,
-  topK: number = 5,
-  provider?: AIProvider
-): Promise<ProductSearchResult[]> {
+export async function searchProducts(env: Env, query: string, topK: number = 5): Promise<ProductSearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  const aiProvider = provider ?? new WorkersAIProvider(env.AI);
-
   try {
-    // Embed query via provider
-    const vectors = await aiProvider.embed(EMBED_MODEL, [trimmed]);
-    const queryVector = vectors?.[0] ?? null;
+    // Embed query
+    const embeddingResponse: any = await env.AI.run(EMBED_MODEL, { text: [trimmed] });
+
+    let queryVector: number[] | null = null;
+    if (embeddingResponse?.data && Array.isArray(embeddingResponse.data)) {
+      const d = embeddingResponse.data;
+      if (Array.isArray(d[0])) queryVector = d[0] as number[];
+      else queryVector = d as number[];
+    } else if (embeddingResponse?.embeddings && Array.isArray(embeddingResponse.embeddings)) {
+      queryVector = embeddingResponse.embeddings[0] as number[];
+    }
 
     if (queryVector && queryVector.length === 768) {
       const vectorResults = await env.VECTOR_INDEX.query(queryVector, {

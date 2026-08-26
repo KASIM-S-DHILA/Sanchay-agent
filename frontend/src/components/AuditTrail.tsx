@@ -1,69 +1,82 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface AuditEvent {
-  source?: "do" | "d1";
-  id?: string | number;
-  ts?: number;
-  action: string;
-  status: string;
-  reason?: string;
-  detail?: string;
-  actor?: string;
-  sku?: string;
-  order_id?: string;
-  payment_id?: string;
-  amount_paise?: number;
-  bound_paise?: number;
+  id: string;
+  ts: number;
+  endpoint: string;
+  method: string;
+  params?: Record<string, unknown> | null;
+  response?: Record<string, unknown> | null;
+  status: string; // ok | error | blocked
+  duration_ms?: number;
 }
 
-const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN")}`;
-
-export function AuditTrail({ sessionId }: { sessionId: string }) {
+export function AuditTrail({
+  sessionId,
+  onEvent,
+}: {
+  sessionId: string;
+  onEvent?: (event: AuditEvent) => void;
+}) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const lastSeenRef = useRef<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`/audit?sid=${encodeURIComponent(sessionId)}`);
-      if (res.status === 200) {
-        const data: { events?: AuditEvent[] } = await res.json();
-        setEvents(data.events ?? []);
-      } else {
+      const res = await fetch(`/api/audit?session_id=${encodeURIComponent(sessionId)}`);
+      if (res.status !== 200) {
         setEvents([]);
+        return;
       }
+      const data: any = await res.json();
+      const incoming: AuditEvent[] = data.data?.events ?? data.events ?? [];
+
+      // Surface new events to the parent (e.g. to trigger the Razorpay modal)
+      if (onEvent) {
+        for (const e of incoming) {
+          if (!lastSeenRef.current.has(e.id)) {
+            lastSeenRef.current.add(e.id);
+            onEvent(e);
+          }
+        }
+      }
+      setEvents(incoming.reverse()); // newest first
     } catch {
-      setEvents([]);
-    } finally {
-      setLoading(false);
+      // transient poll failure — keep previous state
     }
-  }, [sessionId]);
+  }, [sessionId, onEvent]);
 
   useEffect(() => {
-    setLoading(true);
     refresh();
-    // Auto-refresh every 3 seconds
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
-  }, [sessionId, refresh]);
+  }, [refresh]);
 
   return (
     <div className="audit-trail">
-      <h2>Audit Trail</h2>
-      {loading ? (
-        <p>Loading…</p>
-      ) : events.length === 0 ? (
-        <p>No audited events yet for this session.</p>
+      <h2>API Call Log</h2>
+      {events.length === 0 ? (
+        <p>No API calls yet for this session.</p>
       ) : (
         <ul>
-          {events.map((e, i) => (
-            <li key={`${e.source}-${e.id ?? i}`}>
-              <span className={`badge badge-${e.source ?? "do"}`}>{e.source?.toUpperCase() ?? "DO"}</span>{" "}
-              <strong>{e.action}</strong> — {e.status}
-              {typeof e.amount_paise === "number" && <> · {rupees(e.amount_paise)}</>}
-              {typeof e.bound_paise === "number" && <> · Budget: {rupees(e.bound_paise)}</>}
-              {e.sku && <> · {e.sku}</>}
-              {e.order_id && <> · order {e.order_id.slice(0, 18)}</>}
-              {e.reason && <div className="audit-reason">{e.reason}{e.detail ? ` — ${e.detail}` : ""}</div>}
+          {events.map((e) => (
+            <li key={e.id} className={`audit-entry audit-${e.status}`}>
+              <div className="audit-head">
+                <span className={`badge badge-${e.status}`}>{e.status.toUpperCase()}</span>{" "}
+                <strong>
+                  {e.method} {e.endpoint}
+                </strong>
+                {typeof e.duration_ms === "number" && (
+                  <span className="audit-duration"> {e.duration_ms}ms</span>
+                )}
+              </div>
+              {(e.params || e.response) && (
+                <details>
+                  <summary>details</summary>
+                  {e.params && <pre>{JSON.stringify(e.params, null, 2)}</pre>}
+                  {e.response && <pre>{JSON.stringify(e.response, null, 2)}</pre>}
+                </details>
+              )}
             </li>
           ))}
         </ul>
