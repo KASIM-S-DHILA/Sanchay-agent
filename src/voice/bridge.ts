@@ -156,25 +156,41 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
     wsUrl.searchParams.set("input_sample_rate", "16000");
     wsUrl.searchParams.set("output_sample_rate", "22050");
 
-    // 2) Connect upstream
+    // 2) Resolve agent_variables BEFORE opening the upstream socket.
+    //
+    // These must ride on interaction_start, which the protocol requires to be
+    // the first message on the connection. Fetching them inside the open
+    // handler (as a .then, since Workers listeners can't be async) raced
+    // against the browser's mic audio: getVoiceAgentVariables makes up to four
+    // D1 queries, and the browser starts streaming as soon as it sees
+    // "listening", so audio could reach Sarvam first. When it did, the
+    // interaction began with no agent_variables — meaning no session_id — so
+    // the agent's tool calls carried an empty x-session-id and every
+    // cart/checkout tool 401'd. search_catalog kept working throughout because
+    // it's the one tool that doesn't require a session, which made the failure
+    // look like "the agent can't add to cart" rather than an auth problem.
+    //
+    // Awaiting here costs a few ms before the socket opens and removes the
+    // race outright.
+    let agentVariables: Record<string, string>;
+    try {
+      agentVariables = await getVoiceAgentVariables(env, sessionId);
+    } catch (e) {
+      console.error("getVoiceAgentVariables failed, starting with empty vars:", e);
+      agentVariables = { session_id: sessionId, cart_id: sessionId };
+    }
+
+    // 3) Connect upstream
     sarvam = new WebSocket(wsUrl.toString());
     sarvam.addEventListener("open", () => {
-      // 3) interaction_start — first message after open. agent_variables
-      // now matches the app's full 12-key schema (see getVoiceAgentVariables
-      // for which fields are backed by real data vs. sent empty). The
-      // listener itself stays sync — Workers WebSocket event listeners
-      // must not be async (a returned promise is silently dropped, so a
-      // thrown error here would vanish instead of hitting the catch below).
-      getVoiceAgentVariables(env, sessionId)
-        .then((agentVariables) => {
-          if (sarvam && sarvam.readyState === WebSocket.OPEN) {
-            sarvam.send(sarvamMsg({
-              type: "client.action.interaction_start",
-              agent_variables: agentVariables,
-            }));
-          }
-        })
-        .catch((e) => console.error("interaction_start agent_variables failed:", e));
+      // interaction_start is sent synchronously, so it is guaranteed to be the
+      // first frame. Only once it's away do we let the browser start talking.
+      if (sarvam && sarvam.readyState === WebSocket.OPEN) {
+        sarvam.send(sarvamMsg({
+          type: "client.action.interaction_start",
+          agent_variables: agentVariables,
+        }));
+      }
       browser.send(JSON.stringify({ type: "state", state: "listening" }));
     });
 
@@ -221,12 +237,33 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
               sarvam.send(sarvamMsg({ type: "client.system.pong", event_id: msg.event_id }));
             }
             break;
+          case "server.action.interaction_connected":
+            // Sarvam confirming the interaction is live. We already told the
+            // browser "listening" optimistically on open, so there's nothing to
+            // change — logged because its absence is a useful signal that
+            // interaction_start never landed.
+            console.log("sarvam interaction_connected");
+            break;
+          case "server.event.tool_call":
+            // Tools execute on Sarvam's side against our HTTP endpoints, so
+            // there's nothing to run here. Logged so a tool the agent *tried*
+            // is visible even when the resulting HTTP call never arrives (an
+            // auth rejection, a bad product_id, a wrong URL in the dashboard).
+            console.log(
+              "sarvam tool_call:",
+              msg.tool_name ?? msg.name ?? "unknown",
+              JSON.stringify(msg.parameters ?? msg.params ?? {}).slice(0, 300),
+            );
+            break;
           case "server.action.interaction_end":
             browser.send(JSON.stringify({ type: "call_ended" }));
             cleanup();
             break;
           default:
-            break; // unknown types ignored
+            // Never silently swallow an unknown frame — a protocol addition on
+            // Sarvam's side should show up in the logs, not vanish.
+            console.log("sarvam unhandled message type:", msg.type);
+            break;
         }
       } catch (e) {
         console.error("sarvam message parse error:", e);

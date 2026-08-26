@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { logApiCall } from "../middleware/audit";
-import { validateSession } from "../middleware/session";
+import { validateSession, logAuthFailure } from "../middleware/session";
 import { startSession, endSession, setBudget } from "./logic";
 
 export async function handleSessionStart(request: Request, env: Env): Promise<Response> {
@@ -36,6 +36,7 @@ export async function handleSessionStart(request: Request, env: Env): Promise<Re
 export async function handleSessionEnd(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
   if (!session) {
+    await logAuthFailure(env, request, "/api/session/end");
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 
@@ -65,6 +66,7 @@ export async function handleSessionEnd(request: Request, env: Env): Promise<Resp
 export async function handleSessionBudget(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
   if (!session) {
+    await logAuthFailure(env, request, "/api/session/budget");
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 

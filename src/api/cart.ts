@@ -1,10 +1,11 @@
 import type { Env } from "../types";
-import { validateSession } from "../middleware/session";
+import { validateSession, logAuthFailure } from "../middleware/session";
 import { addToCart, removeFromCart, getCart } from "./logic";
 
 export async function handleCartAdd(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
   if (!session) {
+    await logAuthFailure(env, request, "/api/cart/add");
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 
@@ -35,6 +36,7 @@ export async function handleCartAdd(request: Request, env: Env): Promise<Respons
 export async function handleCartRemove(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
   if (!session) {
+    await logAuthFailure(env, request, "/api/cart/remove");
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 
@@ -57,6 +59,7 @@ export async function handleCartRemove(request: Request, env: Env): Promise<Resp
 export async function handleCartGet(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
   if (!session) {
+    await logAuthFailure(env, request, "/api/cart");
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 

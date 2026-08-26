@@ -12,6 +12,12 @@ export interface TranscriptEntry {
  *  audio flows, so 140ms is comfortably past "still talking". */
 const LEVEL_DECAY_MS = 140;
 const LEVEL_TICK_MS = 70;
+/** Playback still queued beyond this (seconds on the audio clock) counts as
+ *  the agent actively speaking. */
+const PLAYBACK_EPSILON = 0.06;
+/** How long the queue must stay empty before we call it a turn. Covers the
+ *  gaps between chunks of one continuous utterance. */
+const SPEAKING_HOLD_MS = 320;
 
 /** Int16 PCM → 0..1 loudness. Scaled by 3 because conversational speech sits
  *  well below full scale; without it the meter barely moves at normal volume. */
@@ -75,8 +81,10 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
   const streamRef = useRef<MediaStream | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const playTimeRef = useRef(0);
-  const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUserRef = useRef(false);
+  /** Wall-clock time we last saw scheduled playback still pending. Used to
+   *  hold the "speaking" state across the small gaps between chunks. */
+  const audioBusyAtRef = useRef(0);
 
   // Level plumbing: chunks write to the refs, one shared interval publishes to
   // React state and decays toward zero. Setting state per chunk would re-render
@@ -108,6 +116,21 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
       if (agentRef.current < 0.01) agentRef.current = 0;
       setMicLevel(micRef.current);
       setAgentLevel(agentRef.current);
+
+      // Single owner of the listening/speaking distinction, derived from the
+      // playback queue rather than from chunk arrivals. Chunks land every
+      // ~36ms with irregular gaps, so anything driven per-chunk oscillates.
+      const ctx = playCtxRef.current;
+      if (!ctx) return;
+      const pending = playTimeRef.current - ctx.currentTime;
+      if (pending > PLAYBACK_EPSILON) {
+        audioBusyAtRef.current = now;
+        setCallState((s) => (s === "listening" ? "speaking" : s));
+      } else if (now - audioBusyAtRef.current > SPEAKING_HOLD_MS) {
+        // Held for a beat past the queue draining so a brief gap mid-sentence
+        // doesn't flip the label back and forth.
+        setCallState((s) => (s === "speaking" ? "listening" : s));
+      }
     }, LEVEL_TICK_MS);
   }, []);
 
@@ -118,10 +141,7 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
     workletRef.current = null;
     try { audioCtxRef.current?.close(); } catch { }
     audioCtxRef.current = null;
-    if (speakTimerRef.current) {
-      clearTimeout(speakTimerRef.current);
-      speakTimerRef.current = null;
-    }
+    audioBusyAtRef.current = 0;
     stopLevelPump();
     // Let playback context drain naturally
   }, [stopLevelPump]);
@@ -164,13 +184,10 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
     playTimeRef.current = Math.max(playTimeRef.current, ctx.currentTime);
     source.start(playTimeRef.current);
     playTimeRef.current += buffer.duration;
-
-    // Drain back to LISTENING when playback queue empties
-    setTimeout(() => {
-      if (playCtxRef.current && ctx.currentTime >= playTimeRef.current - 0.05) {
-        setCallState((s) => (s === "speaking" ? "listening" : s));
-      }
-    }, (buffer.duration * 1000) | 0);
+    audioBusyAtRef.current = Date.now();
+    // Deliberately no state change here. The level pump derives
+    // listening/speaking from this queue; a second writer per chunk is what
+    // made the indicator flicker.
   }, []);
 
   /**
@@ -197,12 +214,9 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
 
     ws.onmessage = async (event: MessageEvent) => {
       if (event.data instanceof ArrayBuffer) {
-        // Raw Int16 PCM audio → schedule playback
+        // Raw Int16 PCM audio → schedule playback. The pump picks up the
+        // resulting queue and owns the speaking/listening state.
         await playPcmChunk(event.data);
-        // Speaking while chunks flow; back to listening after a short gap
-        setCallState("speaking");
-        if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
-        speakTimerRef.current = setTimeout(() => setCallState("listening"), 900);
         return;
       }
       try {
@@ -212,11 +226,18 @@ export function useVoiceCall(onCheckoutSuccess?: (orderId: string, amount: numbe
             setSessionId(msg.session_id);
             void loadTranscriptHistory(msg.session_id);
             break;
-          case "state":
+          case "state": {
+            // Upstream state transitions are advisory. Locally-observed audio
+            // wins: a "listening" arriving mid-utterance would otherwise fight
+            // the playback queue and flicker the indicator.
+            const ctx = playCtxRef.current;
+            const playing = !!ctx && playTimeRef.current - ctx.currentTime > PLAYBACK_EPSILON;
+            if (playing) break;
             if (msg.state === "listening" || msg.state === "speaking") {
-              setCallState(msg.state);
+              setCallState((s) => (s === "idle" ? s : msg.state));
             }
             break;
+          }
           case "transcript":
             if (msg.text) {
               setTranscripts((prev) => [...prev.slice(-20), { role: "user", text: msg.text }]);
