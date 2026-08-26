@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { validateSession, logAuthFailure } from "../middleware/session";
+import { isUnsubstitutedPlaceholder, placeholderError } from "../middleware/placeholders";
 import { checkoutCart, getOrderStatus } from "./logic";
 
 export async function handleCheckout(request: Request, env: Env): Promise<Response> {
@@ -20,9 +21,27 @@ export async function handleOrderStatus(request: Request, env: Env, url: URL): P
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 
-  const orderId = url.pathname.split("/").pop() ?? "";
+  // Accept the order id from a JSON body as well as the URL path. Every other
+  // voice tool is a plain POST with a JSON body; requiring this one to
+  // template a path segment made it the odd one out in the tool editor and the
+  // easiest of the seven to misconfigure.
+  let bodyOrderId: unknown;
+  if (request.method === "POST") {
+    try {
+      const body = (await request.json()) as Record<string, unknown>;
+      bodyOrderId = body.order_id ?? body.orderId;
+    } catch { /* no body — fall back to the path */ }
+  }
+
+  const pathTail = url.pathname.split("/").pop() ?? "";
+  const fromPath = pathTail === "order" ? "" : pathTail; // POST /api/order carries no id
+  const orderId = String(bodyOrderId ?? fromPath ?? "").trim();
+
+  if (isUnsubstitutedPlaceholder(orderId)) {
+    return Response.json({ success: false, error: placeholderError("order id") }, { status: 400 });
+  }
   if (!orderId) {
-    return Response.json({ success: false, error: "order id is required" }, { status: 400 });
+    return Response.json({ success: false, error: "order_id is required" }, { status: 400 });
   }
 
   const result = await getOrderStatus(env, session.id, orderId);

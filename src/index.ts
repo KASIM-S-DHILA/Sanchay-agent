@@ -47,7 +47,12 @@ export default {
         response = await handleCartGet(request, env);
       } else if (url.pathname === "/api/checkout" && request.method === "POST") {
         response = await handleCheckout(request, env);
-      } else if (url.pathname.startsWith("/api/order/") && (request.method === "GET" || request.method === "POST")) {
+      } else if (
+        (url.pathname.startsWith("/api/order/") || url.pathname === "/api/order") &&
+        (request.method === "GET" || request.method === "POST")
+      ) {
+        // /api/order/{id} for the browser; POST /api/order with {order_id} for
+        // voice tools, which are simpler to configure without a path template.
         response = await handleOrderStatus(request, env, url);
       } else if (url.pathname === "/api/audit" && request.method === "GET") {
         response = await handleAudit(request, env, url);
