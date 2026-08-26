@@ -20,6 +20,10 @@ export function AuditTrail({
 }) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const lastSeenRef = useRef<Set<string>>(new Set());
+  // Keep callback in a ref so poll interval doesn't reset on every render
+  // (inline onEvent props change identity each render → tight polling loop)
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
 
   const refresh = useCallback(async () => {
     try {
@@ -32,11 +36,11 @@ export function AuditTrail({
       const incoming: AuditEvent[] = data.data?.events ?? data.events ?? [];
 
       // Surface new events to the parent (e.g. to trigger the Razorpay modal)
-      if (onEvent) {
+      if (onEventRef.current) {
         for (const e of incoming) {
           if (!lastSeenRef.current.has(e.id)) {
             lastSeenRef.current.add(e.id);
-            onEvent(e);
+            onEventRef.current(e);
           }
         }
       }
@@ -44,7 +48,7 @@ export function AuditTrail({
     } catch {
       // transient poll failure — keep previous state
     }
-  }, [sessionId, onEvent]);
+  }, [sessionId]);
 
   useEffect(() => {
     refresh();
