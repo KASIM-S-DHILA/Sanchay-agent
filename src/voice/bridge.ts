@@ -69,6 +69,8 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       { headers: { "X-API-Key": env.SARVAM_API_KEY } },
     );
     if (!signedUrlRes.ok) {
+      const detail = (await signedUrlRes.text()).slice(0, 300);
+      console.error("sarvam signed-url failed:", signedUrlRes.status, detail);
       browser.send(JSON.stringify({
         type: "error",
         message: `Sarvam auth failed (${signedUrlRes.status}). Check SARVAM_API_KEY.`,
@@ -76,7 +78,16 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       await cleanup();
       return new Response("Sarvam auth failed", { status: 502 });
     }
-    const { url: signedUrl }: { url: string } = await signedUrlRes.json();
+    const signedBody = await signedUrlRes.text();
+    let signedUrl: string;
+    try {
+      signedUrl = JSON.parse(signedBody).url;
+    } catch {
+      console.error("sarvam signed-url unexpected body:", signedBody.slice(0, 300));
+      browser.send(JSON.stringify({ type: "error", message: "Sarvam returned an unexpected response." }));
+      await cleanup();
+      return new Response("Bad upstream response", { status: 502 });
+    }
 
     // 2) Connect upstream
     sarvam = new WebSocket(signedUrl);
@@ -141,13 +152,15 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       }
     });
 
-    sarvam.addEventListener("close", () => {
+    sarvam.addEventListener("close", (event: any) => {
+      console.error("sarvam ws closed:", event?.code, event?.reason, "wasOpen:", sarvam?.readyState);
       if (!closed) {
         browser.send(JSON.stringify({ type: "call_ended" }));
       }
       cleanup();
     });
-    sarvam.addEventListener("error", () => {
+    sarvam.addEventListener("error", (event: any) => {
+      console.error("sarvam ws error:", event?.message ?? event);
       if (!closed) {
         browser.send(JSON.stringify({ type: "error", message: "Upstream connection error" }));
         cleanup();
