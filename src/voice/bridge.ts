@@ -196,7 +196,7 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
     await cleanup();
   }
 
-  return new Response(null, { status: 101, webSocket: (pair as any).client });
+  return new Response(null, { status: 101, webSocket: pair[0] });
 }
 
 
