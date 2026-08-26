@@ -125,10 +125,14 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       console.error("sarvam signed-url failed:", signedUrlRes.status, detail);
       browser.send(JSON.stringify({
         type: "error",
-        message: `Sarvam auth failed (${signedUrlRes.status}). Check SARVAM_API_KEY.`,
+        message: `Sarvam auth failed (${signedUrlRes.status}). Check the SARVAM_API_KEY secret on the Worker.`,
       }));
       await cleanup();
-      return new Response("Sarvam auth failed", { status: 502 });
+      // Complete the upgrade even though the call can't proceed. Returning a
+      // 502 here instead would fail the WebSocket handshake, and the browser
+      // would discard the message just sent — leaving the shopper with a bare
+      // "connection failed" and no way to know the key was the problem.
+      return new Response(null, { status: 101, webSocket: pair[0] });
     }
     const signedBody = await signedUrlRes.text();
     let signedUrl: string;
@@ -138,7 +142,8 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
       console.error("sarvam signed-url unexpected body:", signedBody.slice(0, 300));
       browser.send(JSON.stringify({ type: "error", message: "Sarvam returned an unexpected response." }));
       await cleanup();
-      return new Response("Bad upstream response", { status: 502 });
+      // Upgrade anyway, so the message above actually reaches the browser.
+      return new Response(null, { status: 101, webSocket: pair[0] });
     }
     // Mirror the SDK: interaction_type + user_identifier(+type) are REQUIRED
     // query params on the WS connect URL — without them the gateway 403s.
