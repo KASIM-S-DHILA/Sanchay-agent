@@ -74,6 +74,14 @@ const TOOL_DETAILS: Record<(typeof VOICE_TOOLS)[number]["name"], ToolDetail> = {
       order_id: { type: "string", description: "The orderId returned by checkout." },
     },
   },
+  set_budget: {
+    description:
+      "Set or update the shopper's budget for this session, in rupees (not paise). Call this whenever the shopper states or changes a budget out loud — without calling this, a spoken budget is never enforced against add_to_cart or checkout. Fails gracefully if the requested budget is already below the current cart total; the error explains the shortfall so the shopper can be offered to remove something or raise the budget.",
+    httpEquivalent: "N/A — session-scoped, no direct HTTP equivalent exists yet.",
+    params: {
+      budget: { type: "number", description: "Budget in rupees, e.g. 2000 for two thousand rupees. Not paise." },
+    },
+  },
 };
 
 // Fail fast at module load if TOOL_DETAILS and VOICE_TOOLS ever disagree on

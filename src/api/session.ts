@@ -1,13 +1,13 @@
 import type { Env } from "../types";
 import { logApiCall } from "../middleware/audit";
 import { validateSession } from "../middleware/session";
-import { startSession, endSession } from "./logic";
+import { startSession, endSession, setBudget } from "./logic";
 
 export async function handleSessionStart(request: Request, env: Env): Promise<Response> {
   let body: { user_email?: string; budget?: number } = {};
   try {
     body = await request.json();
-  } catch {}
+  } catch { }
 
   const params = {
     user_email: body.user_email?.trim() || undefined,
@@ -52,4 +52,27 @@ export async function handleSessionEnd(request: Request, env: Env): Promise<Resp
   });
 
   return Response.json({ success: true });
+}
+
+/**
+ * Sets a spending cap on the live session from the browser UI.
+ *
+ * Delegates entirely to setBudget() — the same function the `set_budget`
+ * voice tool dispatches to — so a budget typed on screen and a budget spoken
+ * aloud get identical validation, identical rejection messages, and identical
+ * audit rows. No validation is duplicated here on purpose.
+ */
+export async function handleSessionBudget(request: Request, env: Env): Promise<Response> {
+  const session = await validateSession(env, request);
+  if (!session) {
+    return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
+  }
+
+  let body: { budget?: unknown } = {};
+  try {
+    body = await request.json();
+  } catch { }
+
+  const result = await setBudget(env, session.id, body.budget);
+  return Response.json(result.body, { status: result.status });
 }

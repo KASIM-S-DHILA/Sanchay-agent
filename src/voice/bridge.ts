@@ -42,6 +42,30 @@ function sarvamMsg(obj: Record<string, unknown>): string {
   return JSON.stringify({ origin: "client", timestamp: Date.now() / 1000, ...obj });
 }
 
+/**
+ * Persists one transcript turn so the conversation can be reviewed after
+ * the call ends or the page reloads — see GET /api/voice/transcript. Never
+ * allowed to break the live call: failures are logged and swallowed, same
+ * pattern as every other best-effort write in this bridge.
+ */
+async function saveTranscriptTurn(env: Env, sessionId: string, role: "user" | "agent", text: string): Promise<void> {
+  if (!text) return;
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS voice_transcripts (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+        text TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO voice_transcripts (id, session_id, role, text, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(crypto.randomUUID(), sessionId, role, text, new Date().toISOString())
+      .run();
+  } catch (e) {
+    console.error("saveTranscriptTurn failed:", e);
+  }
+}
+
 export async function handleVoiceWebSocket(request: Request, env: Env): Promise<Response> {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return new Response("Expected WebSocket", { status: 426 });
@@ -162,20 +186,26 @@ export async function handleVoiceWebSocket(request: Request, env: Env): Promise<
             }
             break;
           case "server.media.text":
-          case "server.media.text_chunk":
+          case "server.media.text_chunk": {
+            const agentText = msg.text ?? msg.content ?? "";
             if (browser.readyState === WebSocket.OPEN) {
-              browser.send(JSON.stringify({ type: "agent_text", text: msg.text ?? msg.content ?? "" }));
+              browser.send(JSON.stringify({ type: "agent_text", text: agentText }));
             }
+            void saveTranscriptTurn(env, sessionId, "agent", agentText);
             break;
-          case "server.event.transcription":
+          }
+          case "server.event.transcription": {
+            const userText = msg.transcript ?? msg.text ?? "";
             if (browser.readyState === WebSocket.OPEN) {
               browser.send(JSON.stringify({
                 type: "transcript",
                 role: "user",
-                text: msg.transcript ?? msg.text ?? "",
+                text: userText,
               }));
             }
+            void saveTranscriptTurn(env, sessionId, "user", userText);
             break;
+          }
           case "server.event.state_transition":
             if (browser.readyState === WebSocket.OPEN) {
               browser.send(JSON.stringify({ type: "state", state: msg.state ?? "" }));

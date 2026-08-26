@@ -124,8 +124,13 @@ export async function startSession(
  *  - order_id: the session's most recent order (created/attempted/paid),
  *    if one exists — lets a returning caller's agent reference "your
  *    order" without the shopper repeating the id.
- *  - previous_categories / products_discussed: sourced from
- *    user_preferences (requires the session to have an associated email;
+ *  - previous_categories: derived from user_preferences.previous_products
+ *    (the field endSession actually writes) by looking up each product's
+ *    category — NOT from preferred_categories, which nothing in this
+ *    codebase ever writes and would always resolve to an empty, silently
+ *    fabricated-looking signal. Same pattern as getCrossSellSuggestions.
+ *  - products_discussed: sourced from user_preferences.previous_products
+ *    directly (requires the session to have an associated email;
  *    anonymous sessions get empty strings here).
  *
  * Fields with no real source in this app (call_disposition, call_summary,
@@ -167,15 +172,24 @@ export async function getVoiceAgentVariables(
     if (email) {
       try {
         const prefs: any = await env.DB.prepare(
-          "SELECT preferred_categories, previous_products FROM user_preferences WHERE user_id = ?",
+          "SELECT previous_products FROM user_preferences WHERE user_id = ?",
         )
           .bind(email)
           .first();
         if (prefs) {
-          const categories = JSON.parse(prefs.preferred_categories || "[]");
-          const products = JSON.parse(prefs.previous_products || "[]");
-          empty.previous_categories = Array.isArray(categories) ? categories.join(", ") : "";
+          const products: string[] = JSON.parse(prefs.previous_products || "[]");
           empty.products_discussed = Array.isArray(products) ? products.join(", ") : "";
+
+          if (Array.isArray(products) && products.length > 0) {
+            const placeholders = products.map(() => "?").join(",");
+            const catRows: any[] = (
+              await env.DB.prepare(`SELECT DISTINCT category FROM products WHERE id IN (${placeholders})`)
+                .bind(...products)
+                .all()
+            ).results ?? [];
+            const categories = catRows.map((r) => r.category as string).filter(Boolean);
+            empty.previous_categories = categories.join(", ");
+          }
         }
       } catch (e) {
         console.error("getVoiceAgentVariables: preferences lookup failed:", e);
@@ -375,6 +389,55 @@ async function getBudget(env: Env, sessionId: string): Promise<number | null> {
     .bind(sessionId)
     .first();
   return row?.budget_paise ?? null;
+}
+
+/**
+ * Sets or updates the session's budget mid-conversation. Exists because the
+ * voice persona is expected to acknowledge and enforce a budget the
+ * shopper states verbally (e.g. "keep me under 2000 rupees") — without
+ * this tool, budget_paise could only ever be set once at session start,
+ * so a spoken budget had no real backend effect even though the persona
+ * described handling it.
+ *
+ * Rejects a budget lower than what's already committed in the cart rather
+ * than silently accepting a number that would make the existing cart
+ * invalid — the shopper is told to remove items first instead.
+ */
+export async function setBudget(
+  env: Env,
+  sessionId: string,
+  budgetInput: unknown,
+): Promise<LogicResult> {
+  const budget = Number(budgetInput);
+  if (!Number.isFinite(budget) || budget <= 0) {
+    const body = { success: false, error: "budget must be a positive number" };
+    await logCall(env, sessionId, "/api/session/budget", { budget: budgetInput }, body);
+    return { status: 400, body };
+  }
+  const budgetPaise = Math.round(budget * 100);
+
+  const cart = await getCartPayload(env, sessionId);
+  if (cart.total > budgetPaise) {
+    const body = {
+      success: false,
+      error: `Current cart total is ₹${(cart.total / 100).toLocaleString("en-IN")}, which already exceeds ₹${budget.toLocaleString("en-IN")} — remove something first or choose a higher budget`,
+    };
+    await logCall(env, sessionId, "/api/session/budget", { budget: budgetInput }, body);
+    return { status: 200, body };
+  }
+
+  await env.DB.prepare("UPDATE sessions SET budget_paise = ? WHERE id = ?").bind(budgetPaise, sessionId).run();
+
+  const body = {
+    success: true as const,
+    data: {
+      budget: budgetPaise,
+      budget_display: `₹${budget.toLocaleString("en-IN")}`,
+      budgetRemaining: Math.max(0, budgetPaise - cart.total),
+    },
+  };
+  await logCall(env, sessionId, "/api/session/budget", { budget: budgetInput }, body);
+  return { status: 200, body };
 }
 
 export async function getCart(env: Env, sessionId: string): Promise<LogicResult> {

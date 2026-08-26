@@ -145,3 +145,17 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_unique
   ON idempotency_keys(session_id, endpoint, idempotency_key);
+
+-- Persists the live voice call transcript (both shopper and agent turns) so
+-- a conversation can be reviewed after the call ends or the page reloads —
+-- separate from api_call_log, which audits commerce ACTIONS, not
+-- conversational text.
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL, -- 'user' | 'agent'
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_voice_transcripts_session ON voice_transcripts(session_id);

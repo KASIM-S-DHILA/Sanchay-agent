@@ -32,6 +32,10 @@ export async function bootstrapSchema(db: any): Promise<void> {
       idempotency_key TEXT NOT NULL, status_code INTEGER NOT NULL,
       response_json TEXT NOT NULL, created_at TEXT NOT NULL)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_unique ON idempotency_keys(session_id, endpoint, idempotency_key)`,
+    `CREATE TABLE IF NOT EXISTS voice_transcripts (
+      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
+      text TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    `CREATE INDEX IF NOT EXISTS idx_voice_transcripts_session ON voice_transcripts(session_id)`,
   ];
   for (const stmt of statements) {
     await db.prepare(stmt).run().catch(() => { });

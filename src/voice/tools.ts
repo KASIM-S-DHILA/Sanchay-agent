@@ -46,6 +46,8 @@ export async function executeToolCall(
       return (
         await logic.getOrderStatus(env, sessionId, String(params.order_id ?? ""))
       ).body;
+    case "set_budget":
+      return (await logic.setBudget(env, sessionId, params.budget)).body;
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }
@@ -58,4 +60,5 @@ export const VOICE_TOOLS = [
   { name: "get_cart", params: [] },
   { name: "checkout", params: [] },
   { name: "get_order_status", params: ["order_id"] },
+  { name: "set_budget", params: ["budget"] },
 ] as const;

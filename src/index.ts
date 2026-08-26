@@ -1,8 +1,9 @@
-import { handleSessionStart, handleSessionEnd } from "./api/session";
+import { handleSessionStart, handleSessionEnd, handleSessionBudget } from "./api/session";
 import { handleCatalogSearch } from "./api/catalog";
 import { handleCartAdd, handleCartRemove, handleCartGet } from "./api/cart";
 import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
+import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
 import { handleSeedCatalog, handleImportFlipkartCatalog } from "./api/admin";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
@@ -33,6 +34,8 @@ export default {
         response = await handleSessionStart(request, env);
       } else if (url.pathname === "/api/session/end" && request.method === "POST") {
         response = await handleSessionEnd(request, env);
+      } else if (url.pathname === "/api/session/budget" && request.method === "POST") {
+        response = await handleSessionBudget(request, env);
       } else if (url.pathname === "/api/catalog" && (request.method === "GET" || request.method === "POST")) {
         // POST accepted: Sarvam tools are configured all-POST
         response = await handleCatalogSearch(request, env, url);
@@ -48,6 +51,8 @@ export default {
         response = await handleOrderStatus(request, env, url);
       } else if (url.pathname === "/api/audit" && request.method === "GET") {
         response = await handleAudit(request, env, url);
+      } else if (url.pathname === "/api/voice/transcript" && request.method === "GET") {
+        response = await handleGetTranscript(request, env, url);
       } else if (url.pathname === "/api/tools" && request.method === "GET") {
         response = await handleGetTools(request, env);
       } else if (url.pathname === "/openapi.yaml" && request.method === "GET") {
