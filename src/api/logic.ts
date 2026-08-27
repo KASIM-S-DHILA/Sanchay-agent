@@ -583,12 +583,19 @@ async function cacheSearchResults(
     .map((p) => ({ productId: String(p.productId ?? ""), name: String(p.name ?? "") }))
     .filter((p) => p.productId);
   if (slim.length === 0) return;
-  await env.DB.prepare(
-    `INSERT INTO search_result_cache (session_id, results_json, created_at) VALUES (?, ?, ?)
-     ON CONFLICT(session_id) DO UPDATE SET results_json = excluded.results_json, created_at = excluded.created_at`,
-  )
-    .bind(sessionId, JSON.stringify(slim), new Date().toISOString())
-    .run();
+  try {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS search_result_cache (session_id TEXT PRIMARY KEY, results_json TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    ).run();
+    await env.DB.prepare(
+      `INSERT INTO search_result_cache (session_id, results_json, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET results_json = excluded.results_json, created_at = excluded.created_at`,
+    )
+      .bind(sessionId, JSON.stringify(slim), new Date().toISOString())
+      .run();
+  } catch {
+    // cache is best-effort — don't surface as worker error
+  }
 }
 
 type CacheLookupResult =
