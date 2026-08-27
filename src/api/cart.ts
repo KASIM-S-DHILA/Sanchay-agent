@@ -1,6 +1,14 @@
 import type { Env } from "../types";
 import { validateSession, logAuthFailure } from "../middleware/session";
-import { addToCart, removeFromCart, getCart } from "./logic";
+import { isUnsubstitutedPlaceholder, placeholderError } from "../middleware/placeholders";
+import {
+  addToCart,
+  removeFromCart,
+  getCart,
+  proposeAddToCart,
+  proposeRemoveFromCart,
+  confirmCartAction,
+} from "./logic";
 
 export async function handleCartAdd(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
@@ -53,6 +61,68 @@ export async function handleCartRemove(request: Request, env: Env): Promise<Resp
   // Quantity range/integer validation happens inside removeFromCart, so HTTP
   // and voice tool calls get identical enforcement from one place.
   const result = await removeFromCart(env, session.id, productId, body.quantity);
+  return Response.json(result.body, { status: result.status });
+}
+
+export async function handlePropseAddToCart(request: Request, env: Env): Promise<Response> {
+  const session = await validateSession(env, request);
+  if (!session) {
+    await logAuthFailure(env, request, "/api/cart/propose-add");
+    return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
+  }
+  let body: { product_id?: string; productId?: string; quantity?: number | string } = {};
+  try {
+    body = await request.json();
+  } catch { }
+  const productId = body.product_id ?? body.productId;
+  if (!productId) {
+    return Response.json({ success: false, error: "product_id is required" }, { status: 400 });
+  }
+  if (isUnsubstitutedPlaceholder(productId)) {
+    return Response.json({ success: false, error: placeholderError("product id") }, { status: 400 });
+  }
+  const result = await proposeAddToCart(env, session.id, productId, body.quantity);
+  return Response.json(result.body, { status: result.status });
+}
+
+export async function handleProposeRemoveFromCart(request: Request, env: Env): Promise<Response> {
+  const session = await validateSession(env, request);
+  if (!session) {
+    await logAuthFailure(env, request, "/api/cart/propose-remove");
+    return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
+  }
+  let body: { product_id?: string; productId?: string; quantity?: number | string } = {};
+  try {
+    body = await request.json();
+  } catch { }
+  const productId = body.product_id ?? body.productId;
+  if (!productId) {
+    return Response.json({ success: false, error: "product_id is required" }, { status: 400 });
+  }
+  if (isUnsubstitutedPlaceholder(productId)) {
+    return Response.json({ success: false, error: placeholderError("product id") }, { status: 400 });
+  }
+  const result = await proposeRemoveFromCart(env, session.id, productId, body.quantity);
+  return Response.json(result.body, { status: result.status });
+}
+
+export async function handleConfirmCartAction(request: Request, env: Env): Promise<Response> {
+  const session = await validateSession(env, request);
+  if (!session) {
+    await logAuthFailure(env, request, "/api/cart/confirm");
+    return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
+  }
+  let body: { action_token?: string } = {};
+  try {
+    body = await request.json();
+  } catch { }
+  if (!body.action_token) {
+    return Response.json({ success: false, error: "action_token is required" }, { status: 400 });
+  }
+  if (isUnsubstitutedPlaceholder(body.action_token)) {
+    return Response.json({ success: false, error: placeholderError("action_token") }, { status: 400 });
+  }
+  const result = await confirmCartAction(env, session.id, body.action_token);
   return Response.json(result.body, { status: result.status });
 }
 

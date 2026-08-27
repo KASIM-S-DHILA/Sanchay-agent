@@ -173,3 +173,25 @@ CREATE TABLE IF NOT EXISTS search_result_cache (
   results_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- Two-phase commit for cart mutations: propose_cart_change resolves what the
+-- caller meant (product, quantity, add/remove) and previews the outcome
+-- WITHOUT writing to cart_items. Nothing mutates until confirm_action is
+-- called with the exact token this minted. This exists because a single-shot
+-- add/remove call trusts the caller (model or dashboard misconfiguration) to
+-- have constructed a correct request; a token round-trip means a mutation can
+-- only happen for something we already resolved and reported back, and
+-- audit rows for propose vs confirm make an abandoned/never-confirmed
+-- proposal visible as its own outcome rather than indistinguishable from a
+-- successful mutation.
+CREATE TABLE IF NOT EXISTS pending_actions (
+  token TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  action TEXT NOT NULL, -- 'add' | 'remove'
+  payload_json TEXT NOT NULL, -- resolved product_id/quantity/name, never the raw input
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_actions_session ON pending_actions(session_id);

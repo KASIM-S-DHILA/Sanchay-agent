@@ -1,6 +1,13 @@
 import { handleSessionStart, handleSessionEnd, handleSessionBudget } from "./api/session";
 import { handleCatalogSearch } from "./api/catalog";
-import { handleCartAdd, handleCartRemove, handleCartGet } from "./api/cart";
+import {
+  handleCartAdd,
+  handleCartRemove,
+  handleCartGet,
+  handlePropseAddToCart,
+  handleProposeRemoveFromCart,
+  handleConfirmCartAction,
+} from "./api/cart";
 import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
 import { handleGetTranscript } from "./api/transcript";
@@ -43,6 +50,12 @@ export default {
         response = await handleCartAdd(request, env);
       } else if (url.pathname === "/api/cart/remove" && request.method === "POST") {
         response = await handleCartRemove(request, env);
+      } else if (url.pathname === "/api/cart/propose-add" && request.method === "POST") {
+        response = await handlePropseAddToCart(request, env);
+      } else if (url.pathname === "/api/cart/propose-remove" && request.method === "POST") {
+        response = await handleProposeRemoveFromCart(request, env);
+      } else if (url.pathname === "/api/cart/confirm" && request.method === "POST") {
+        response = await handleConfirmCartAction(request, env);
       } else if (url.pathname === "/api/cart" && (request.method === "GET" || request.method === "POST")) {
         response = await handleCartGet(request, env);
       } else if (url.pathname === "/api/checkout" && request.method === "POST") {

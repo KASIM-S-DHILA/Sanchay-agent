@@ -82,6 +82,35 @@ const TOOL_DETAILS: Record<(typeof VOICE_TOOLS)[number]["name"], ToolDetail> = {
       budget: { type: "number", description: "Budget in rupees, e.g. 2000 for two thousand rupees. Not paise." },
     },
   },
+  propose_add_to_cart: {
+    description:
+      "PREVIEW an add-to-cart without changing anything. Returns the resolved product, price, and what the new cart total would be, plus an action_token. Nothing is added to the cart until confirm_action is called with that exact token. Always state the preview out loud (product, price, new total) and get the shopper's go-ahead before calling confirm_action — this is how a real shopkeeper repeats an order back before ringing it up. The token expires in 90 seconds; if it expires, call this again rather than reusing a stale one.",
+    httpEquivalent: "POST /api/cart/propose-add",
+    params: {
+      product_id: {
+        type: "string",
+        description: "The product's id or exact name, ideally from a recent search_catalog result. Never invent one.",
+      },
+      quantity: { type: "integer", description: "1-99. Defaults to 1 if omitted." },
+    },
+  },
+  propose_remove_from_cart: {
+    description:
+      "PREVIEW a removal without changing anything. Returns what would be removed and what would remain, plus an action_token. Nothing is removed from the cart until confirm_action is called with that exact token.",
+    httpEquivalent: "POST /api/cart/propose-remove",
+    params: {
+      product_id: { type: "string", description: "The product's id or exact name as shown in the cart." },
+      quantity: { type: "integer", description: "1-99. Omit to remove the whole line item." },
+    },
+  },
+  confirm_action: {
+    description:
+      "Executes a previously proposed add or remove. Takes ONLY the action_token from propose_add_to_cart or propose_remove_from_cart — never construct or guess a token. This is the one call that actually mutates the cart; everything before it was a preview.",
+    httpEquivalent: "POST /api/cart/confirm",
+    params: {
+      action_token: { type: "string", description: "The exact action_token returned by a propose_* call." },
+    },
+  },
 };
 
 // Fail fast at module load if TOOL_DETAILS and VOICE_TOOLS ever disagree on

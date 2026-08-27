@@ -48,6 +48,16 @@ export async function executeToolCall(
       ).body;
     case "set_budget":
       return (await logic.setBudget(env, sessionId, params.budget)).body;
+    case "propose_add_to_cart":
+      return (
+        await logic.proposeAddToCart(env, sessionId, String(params.product_id), params.quantity)
+      ).body;
+    case "propose_remove_from_cart":
+      return (
+        await logic.proposeRemoveFromCart(env, sessionId, String(params.product_id), params.quantity)
+      ).body;
+    case "confirm_action":
+      return (await logic.confirmCartAction(env, sessionId, String(params.action_token ?? ""))).body;
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }
@@ -61,4 +71,7 @@ export const VOICE_TOOLS = [
   { name: "checkout", params: [] },
   { name: "get_order_status", params: ["order_id"] },
   { name: "set_budget", params: ["budget"] },
+  { name: "propose_add_to_cart", params: ["product_id", "quantity?"] },
+  { name: "propose_remove_from_cart", params: ["product_id", "quantity?"] },
+  { name: "confirm_action", params: ["action_token"] },
 ] as const;

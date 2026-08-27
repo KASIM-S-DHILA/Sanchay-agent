@@ -38,6 +38,10 @@ export async function bootstrapSchema(db: any): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_voice_transcripts_session ON voice_transcripts(session_id)`,
     `CREATE TABLE IF NOT EXISTS search_result_cache (
       session_id TEXT PRIMARY KEY, results_json TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS pending_actions (
+      token TEXT PRIMARY KEY, session_id TEXT NOT NULL, action TEXT NOT NULL,
+      payload_json TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      consumed_at TEXT)`,
   ];
   for (const stmt of statements) {
     await db.prepare(stmt).run().catch(() => { });

@@ -647,6 +647,333 @@ async function lookupCachedProductId(
   return { kind: "unresolved", cached };
 }
 
+// ---------------------------------------------------------------------------
+// Two-phase cart changes: propose (resolve + preview, no write) then confirm
+// (redeem a token minted moments ago, then and only then mutate). See the
+// comment on pending_actions in schema.sql for why this exists — it turns
+// "the caller must construct a correct request" into "the caller must echo
+// back a token we handed them seconds ago," which is a much smaller thing
+// for a voice agent (or a misconfigured dashboard tool) to get right, and
+// makes an abandoned proposal distinguishable from an executed one in the
+// audit trail instead of the two looking identical.
+// ---------------------------------------------------------------------------
+
+const PENDING_ACTION_TTL_MS = 90 * 1000;
+
+async function ensurePendingActionsTable(env: Env): Promise<void> {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS pending_actions (
+      token TEXT PRIMARY KEY, session_id TEXT NOT NULL, action TEXT NOT NULL,
+      payload_json TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+      consumed_at TEXT)`,
+  ).run();
+}
+
+interface ProposedAdd {
+  kind: "add";
+  productId: string;
+  name: string;
+  price: number;
+  price_display: string;
+  quantity: number;
+  correctedFrom?: string;
+}
+interface ProposedRemove {
+  kind: "remove";
+  productId: string;
+  name: string;
+  quantity: number; // the actual amount that will be removed (may be less than requested)
+  wholeLine: boolean;
+}
+
+/**
+ * Resolves and previews an add-to-cart WITHOUT writing to cart_items. Reuses
+ * the exact same product lookup / cache resolution as addToCart so the two
+ * paths can never disagree about what a given input resolves to — only the
+ * final atomic write (guarded upsert) is skipped here.
+ */
+export async function proposeAddToCart(
+  env: Env,
+  sessionId: string,
+  productIdInput: string,
+  quantityInput?: unknown,
+): Promise<LogicResult> {
+  let productId = productIdInput;
+  const parsedQty = parseQuantityInput(quantityInput);
+  if (!parsedQty.ok) {
+    const body = { success: false, error: "quantity must be an integer 1-99" };
+    await logCall(env, sessionId, "/api/cart/propose-add", { product_id: productId, quantity: quantityInput }, body);
+    return { status: 400, body };
+  }
+  const qty = parsedQty.value ?? 1;
+
+  let product = await env.DB.prepare("SELECT id, name, price, stock FROM products WHERE id = ?")
+    .bind(productId)
+    .first<any>();
+  let resolvedFrom: string | null = null;
+
+  if (!product) {
+    const lookup = sessionId ? await lookupCachedProductId(env, sessionId, productId) : { kind: "no_cache" as const };
+    if (lookup.kind === "resolved") {
+      resolvedFrom = productId;
+      productId = lookup.productId;
+      product = await env.DB.prepare("SELECT id, name, price, stock FROM products WHERE id = ?")
+        .bind(productId)
+        .first<any>();
+    }
+    if (!product) {
+      const choices =
+        lookup.kind === "unresolved"
+          ? ` The last search in this session showed: ${lookup.cached.map((p) => `${p.name} (id "${p.productId}")`).join(", ")}.`
+          : "";
+      const body = {
+        success: false,
+        error: `No product with id "${productId}".${choices} Call search_catalog and use the exact productId field from its response.`,
+      };
+      await logCall(env, sessionId, "/api/cart/propose-add", { product_id: productId, quantity: qty }, body);
+      return { status: 404, body };
+    }
+  }
+
+  if (product.stock <= 0) {
+    const body = { success: false, error: "Out of stock" };
+    await logCall(env, sessionId, "/api/cart/propose-add", { product_id: productId, quantity: qty }, body);
+    return { status: 200, body };
+  }
+
+  const existing: any = await env.DB.prepare(
+    "SELECT quantity FROM cart_items WHERE session_id = ? AND product_id = ?",
+  )
+    .bind(sessionId, productId)
+    .first();
+  const already = existing?.quantity ?? 0;
+  if (already + qty > product.stock) {
+    const available = Math.max(0, product.stock - already);
+    const body = {
+      success: false,
+      error: available === 0 ? "No more stock available" : `Only ${available} more available (stock limit ${product.stock})`,
+    };
+    await logCall(env, sessionId, "/api/cart/propose-add", { product_id: productId, quantity: qty }, body);
+    return { status: 200, body };
+  }
+
+  const budget = await getBudget(env, sessionId);
+  const currentTotal: any = await env.DB.prepare(
+    "SELECT COALESCE(SUM(price * quantity), 0) AS total FROM cart_items WHERE session_id = ?",
+  )
+    .bind(sessionId)
+    .first();
+  const newTotal = (currentTotal?.total ?? 0) + product.price * qty;
+  if (budget != null && newTotal > budget) {
+    const body = {
+      success: false,
+      error: `Exceeds budget of ₹${(budget / 100).toLocaleString("en-IN")}`,
+    };
+    await logCall(env, sessionId, "/api/cart/propose-add", { product_id: productId, quantity: qty }, body);
+    return { status: 200, body };
+  }
+
+  const payload: ProposedAdd = {
+    kind: "add",
+    productId,
+    name: product.name,
+    price: product.price,
+    price_display: `₹${(product.price / 100).toLocaleString("en-IN")}`,
+    quantity: qty,
+    ...(resolvedFrom ? { correctedFrom: resolvedFrom } : {}),
+  };
+  const token = await mintPendingAction(env, sessionId, payload);
+
+  const body = {
+    success: true as const,
+    data: {
+      action_token: token,
+      expires_in_seconds: PENDING_ACTION_TTL_MS / 1000,
+      preview: {
+        product_id: productId,
+        name: product.name,
+        quantity: qty,
+        price_display: payload.price_display,
+        line_total_display: `₹${((product.price * qty) / 100).toLocaleString("en-IN")}`,
+        new_cart_total_display: `₹${(newTotal / 100).toLocaleString("en-IN")}`,
+        ...(resolvedFrom ? { correctedProductId: { from: resolvedFrom, to: productId } } : {}),
+      },
+    },
+  };
+  await logCall(env, sessionId, "/api/cart/propose-add", { product_id: productId, quantity: qty }, body);
+  return { status: 200, body };
+}
+
+/**
+ * Resolves and previews a removal WITHOUT writing to cart_items. Mirrors
+ * removeFromCart's cache-free resolution (matching against the CART itself,
+ * not a search cache — the cart is ground truth for what can be removed).
+ */
+export async function proposeRemoveFromCart(
+  env: Env,
+  sessionId: string,
+  productIdInput: string,
+  quantityInput?: unknown,
+): Promise<LogicResult> {
+  let productId = productIdInput;
+  const parsedQty = parseQuantityInput(quantityInput);
+  if (!parsedQty.ok) {
+    const body = { success: false, error: "quantity must be an integer 1-99" };
+    await logCall(env, sessionId, "/api/cart/propose-remove", { product_id: productId, quantity: quantityInput }, body);
+    return { status: 400, body };
+  }
+
+  const rows = (
+    await env.DB.prepare("SELECT product_id, product_name, quantity FROM cart_items WHERE session_id = ?")
+      .bind(sessionId)
+      .all<any>()
+  ).results ?? [];
+
+  const normalizeId = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const normalizeName = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
+  const target = normalizeId(productId);
+  const targetName = normalizeName(productId);
+  const existing =
+    rows.find((r: any) => normalizeId(r.product_id) === target) ??
+    rows.find((r: any) => normalizeName(r.product_name) === targetName);
+
+  if (!existing) {
+    const body = {
+      success: false,
+      error: `"${productId}" isn't in the cart. Call get_cart to see the exact product_id and name of what's actually there.`,
+    };
+    await logCall(env, sessionId, "/api/cart/propose-remove", { product_id: productId }, body);
+    return { status: 200, body };
+  }
+
+  const requested = parsedQty.value ?? existing.quantity;
+  const removedQty = Math.min(requested, existing.quantity);
+  const wholeLine = removedQty >= existing.quantity;
+
+  const payload: ProposedRemove = {
+    kind: "remove",
+    productId: existing.product_id,
+    name: existing.product_name,
+    quantity: removedQty,
+    wholeLine,
+  };
+  const token = await mintPendingAction(env, sessionId, payload);
+
+  const body = {
+    success: true as const,
+    data: {
+      action_token: token,
+      expires_in_seconds: PENDING_ACTION_TTL_MS / 1000,
+      preview: {
+        product_id: existing.product_id,
+        name: existing.product_name,
+        quantity: removedQty,
+        remaining_in_cart: wholeLine ? 0 : existing.quantity - removedQty,
+      },
+    },
+  };
+  await logCall(
+    env,
+    sessionId,
+    "/api/cart/propose-remove",
+    { product_id: existing.product_id, quantity: removedQty },
+    body,
+  );
+  return { status: 200, body };
+}
+
+async function mintPendingAction(
+  env: Env,
+  sessionId: string,
+  payload: ProposedAdd | ProposedRemove,
+): Promise<string> {
+  await ensurePendingActionsTable(env);
+  const token = crypto.randomUUID();
+  const now = Date.now();
+  await env.DB.prepare(
+    `INSERT INTO pending_actions (token, session_id, action, payload_json, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      token,
+      sessionId,
+      payload.kind,
+      JSON.stringify(payload),
+      new Date(now).toISOString(),
+      new Date(now + PENDING_ACTION_TTL_MS).toISOString(),
+    )
+    .run();
+  return token;
+}
+
+/**
+ * Redeems a token minted by proposeAddToCart/proposeRemoveFromCart. This is
+ * the ONLY path that actually mutates cart_items on the propose/confirm
+ * side — a token that doesn't exist, was already consumed, expired, or
+ * belongs to a different session all fail identically (no information about
+ * WHY beyond "invalid or expired"), so a caller can't use this endpoint to
+ * probe for other sessions' tokens.
+ *
+ * Re-resolves the underlying add/remove through the existing addToCart /
+ * removeFromCart functions rather than duplicating their write logic — those
+ * already contain the atomic, race-safe stock/budget guard, and every
+ * safety property they have is inherited here for free. The token only ever
+ * carries what was already validated at propose time; it does not bypass
+ * addToCart's own live re-validation (stock or budget may have changed in
+ * the seconds between propose and confirm, and that must still be caught).
+ */
+export async function confirmCartAction(
+  env: Env,
+  sessionId: string,
+  token: string,
+): Promise<LogicResult> {
+  await ensurePendingActionsTable(env);
+  const row: any = await env.DB.prepare(
+    "SELECT session_id, action, payload_json, expires_at, consumed_at FROM pending_actions WHERE token = ?",
+  )
+    .bind(token)
+    .first();
+
+  const invalid = () => {
+    const body = { success: false, error: "This action_token is invalid or has expired. Propose the change again." };
+    return { status: 404, body };
+  };
+
+  if (!row || row.session_id !== sessionId || row.consumed_at) {
+    const body = invalid().body;
+    await logCall(env, sessionId, "/api/cart/confirm", { action_token: token }, body);
+    return invalid();
+  }
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    const body = invalid().body;
+    await logCall(env, sessionId, "/api/cart/confirm", { action_token: token }, body);
+    return invalid();
+  }
+
+  // Mark consumed BEFORE executing the mutation. A token can only ever be
+  // redeemed once even if the underlying add/remove itself fails (e.g.
+  // stock vanished in the gap) — retrying means proposing again, which
+  // re-previews against current state rather than blindly reusing a stale
+  // preview.
+  const claim = await env.DB.prepare(
+    "UPDATE pending_actions SET consumed_at = ? WHERE token = ? AND consumed_at IS NULL",
+  )
+    .bind(new Date().toISOString(), token)
+    .run();
+  if (claim.meta.changes === 0) {
+    // Lost a race against a concurrent confirm of the same token.
+    const body = invalid().body;
+    await logCall(env, sessionId, "/api/cart/confirm", { action_token: token }, body);
+    return invalid();
+  }
+
+  const payload = JSON.parse(row.payload_json) as ProposedAdd | ProposedRemove;
+  if (payload.kind === "add") {
+    return addToCart(env, sessionId, payload.productId, payload.quantity);
+  }
+  return removeFromCart(env, sessionId, payload.productId, payload.quantity);
+}
+
 export async function addToCart(
   env: Env,
   sessionId: string,
