@@ -141,7 +141,7 @@ describe("API: Cart", () => {
     const res = await addProduct(sessionId, "FAKE-PRODUCT");
     const data: any = await res.json();
     expect(data.success).toBe(false);
-    expect(data.error).toContain("not found");
+    expect(data.error).toContain("No product with id");
   });
 
   it("budget-exceeded add fails and leaves the cart untouched", async () => {

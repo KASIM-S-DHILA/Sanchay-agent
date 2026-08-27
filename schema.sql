@@ -159,3 +159,17 @@ CREATE TABLE IF NOT EXISTS voice_transcripts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_voice_transcripts_session ON voice_transcripts(session_id);
+
+-- Caches the most recent search_catalog results per session so add_to_cart
+-- can resolve a product_id it doesn't recognize against what was actually
+-- shown to the shopper a moment earlier, instead of only failing. Observed
+-- live: the agent sent "TSHIRT-BLK-001" for a product actually named
+-- "Black Classic Tee" (id "TEE-BLACK-001") -- a fabricated id that resolves
+-- cleanly against the cached name. One row per session; each new search
+-- overwrites the previous one, since only the most recent listing is a
+-- plausible source for the next add.
+CREATE TABLE IF NOT EXISTS search_result_cache (
+  session_id TEXT PRIMARY KEY,
+  results_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);

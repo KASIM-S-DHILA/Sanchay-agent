@@ -268,6 +268,16 @@ export async function searchCatalog(
       };
     });
   }
+
+  // Remember what this session was just shown, so a subsequent add_to_cart
+  // with a wrong id can be resolved against it (see addToCart below) instead
+  // of only failing. Best-effort and never blocks the search response — a
+  // cache-write failure must not turn a working search into an error.
+  if (sessionId && products.length > 0) {
+    await cacheSearchResults(env, sessionId, products).catch((e) =>
+      console.error("search_result_cache write failed:", e),
+    );
+  }
   const body = { success: true as const, data: { query, products } };
   await logCall(env, sessionId, "/api/catalog", { query, limit }, body);
   return { status: 200, body };
@@ -559,13 +569,95 @@ async function storeIdempotentResult(
     .run();
 }
 
+interface CachedSearchResult {
+  productId: string;
+  name: string;
+}
+
+async function cacheSearchResults(
+  env: Env,
+  sessionId: string,
+  products: Record<string, unknown>[],
+): Promise<void> {
+  const slim: CachedSearchResult[] = products
+    .map((p) => ({ productId: String(p.productId ?? ""), name: String(p.name ?? "") }))
+    .filter((p) => p.productId);
+  if (slim.length === 0) return;
+  await env.DB.prepare(
+    `INSERT INTO search_result_cache (session_id, results_json, created_at) VALUES (?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET results_json = excluded.results_json, created_at = excluded.created_at`,
+  )
+    .bind(sessionId, JSON.stringify(slim), new Date().toISOString())
+    .run();
+}
+
+type CacheLookupResult =
+  | { kind: "resolved"; productId: string }
+  | { kind: "unresolved"; cached: CachedSearchResult[] }
+  | { kind: "no_cache" };
+
+/**
+ * Checks a product_id that doesn't exist against what this session was
+ * actually just shown by search_catalog.
+ *
+ * Deliberately does NOT fuzzy-match names — tested against the real case
+ * that motivated this (a fabricated id "TSHIRT-BLK-001" for a product
+ * actually named "Black Classic Tee"): word-overlap and trigram similarity
+ * both score it at zero against the real name, because "tshirt"/"tee" and
+ * "blk"/"black" are abbreviation pairs, not textually similar strings.
+ * Guessing anyway risks silently adding the WRONG product for a genuinely
+ * unrelated id, which is worse than the failure this exists to fix. So the
+ * only auto-resolved case is an id that matches a cached one exactly once
+ * case/punctuation is normalized away; anything else returns the cached
+ * list so the caller can be told the real choices instead of a dead end.
+ */
+async function lookupCachedProductId(
+  env: Env,
+  sessionId: string,
+  wrongId: string,
+): Promise<CacheLookupResult> {
+  const row = await env.DB.prepare("SELECT results_json FROM search_result_cache WHERE session_id = ?")
+    .bind(sessionId)
+    .first<{ results_json: string }>();
+  if (!row) return { kind: "no_cache" };
+
+  let cached: CachedSearchResult[];
+  try {
+    cached = JSON.parse(row.results_json);
+  } catch {
+    return { kind: "no_cache" };
+  }
+  if (cached.length === 0) return { kind: "no_cache" };
+
+  const normalizeId = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const target = normalizeId(wrongId);
+  const idMatch = cached.find((p) => normalizeId(p.productId) === target);
+  if (idMatch) return { kind: "resolved", productId: idMatch.productId };
+
+  // The caller may have sent the product's spoken name instead of its id —
+  // e.g. "Black Classic Tee" — which is not a guess, it's the exact value
+  // this session was just shown. Exact (case/whitespace-insensitive) match
+  // only; no partial or fuzzy matching, so an unrelated or ambiguous string
+  // still falls through to "unresolved" rather than picking a wrong item.
+  const normalizeName = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
+  const target2 = normalizeName(wrongId);
+  const nameMatch = cached.find((p) => normalizeName(p.name) === target2);
+  if (nameMatch) return { kind: "resolved", productId: nameMatch.productId };
+
+  return { kind: "unresolved", cached };
+}
+
 export async function addToCart(
   env: Env,
   sessionId: string,
-  productId: string,
+  productIdInput: string,
   quantityInput?: unknown,
   idempotencyKey?: string,
 ): Promise<LogicResult> {
+  // Reassigned below if the id is resolved against the session's last
+  // search_catalog cache — see the not-found branch.
+  let productId = productIdInput;
+
   const parsedQty = parseQuantityInput(quantityInput);
   if (!parsedQty.ok) {
     const body = { success: false, error: "quantity must be an integer 1-99" };
@@ -573,7 +665,7 @@ export async function addToCart(
     return { status: 400, body };
   }
   const qty = parsedQty.value ?? 1;
-  const params = { product_id: productId, quantity: qty };
+  let params = { product_id: productId, quantity: qty };
 
   // Idempotency — an exact retry with the same key (e.g. a Sarvam tool-call
   // timeout retry) replays the stored result instead of adding the item
@@ -586,14 +678,43 @@ export async function addToCart(
     if (idempotencyKey) await storeIdempotentResult(env, sessionId, "/api/cart/add", idempotencyKey, statusCode, body);
   };
 
-  const product = await env.DB.prepare("SELECT id, name, price, stock FROM products WHERE id = ?")
+  let product = await env.DB.prepare("SELECT id, name, price, stock FROM products WHERE id = ?")
     .bind(productId)
     .first<any>();
+  let resolvedFrom: string | null = null;
+
   if (!product) {
-    const body = { success: false, error: "Product not found" };
-    await logCall(env, sessionId, "/api/cart/add", params, body);
-    await remember(404, body);
-    return { status: 404, body };
+    // A wrong product_id here is almost always the caller inventing or
+    // misremembering an id instead of using the exact value a prior
+    // search_catalog call returned (observed live: "TSHIRT-BLK-001" sent for
+    // a product actually named "Black Classic Tee", id "TEE-BLACK-001").
+    // Check what this session was actually just shown before giving up —
+    // this self-heals a wrong-case/punctuation id automatically, and for
+    // anything else, hands back the real choices instead of a dead end.
+    const lookup = sessionId ? await lookupCachedProductId(env, sessionId, productId) : { kind: "no_cache" as const };
+
+    if (lookup.kind === "resolved") {
+      resolvedFrom = productId;
+      productId = lookup.productId; // everything below (upsert, insert, logging) must use the real id
+      params = { product_id: productId, quantity: qty };
+      product = await env.DB.prepare("SELECT id, name, price, stock FROM products WHERE id = ?")
+        .bind(productId)
+        .first<any>();
+    }
+
+    if (!product) {
+      const choices =
+        lookup.kind === "unresolved"
+          ? ` The last search in this session showed: ${lookup.cached.map((p) => `${p.name} (id "${p.productId}")`).join(", ")}.`
+          : "";
+      const body = {
+        success: false,
+        error: `No product with id "${productId}".${choices} Call search_catalog and use the exact productId field from its response — never guess or construct an id from the product's name.`,
+      };
+      await logCall(env, sessionId, "/api/cart/add", params, body);
+      await remember(404, body);
+      return { status: 404, body };
+    }
   }
   if (product.stock <= 0) {
     const body = { success: false, error: "Out of stock" };
@@ -710,7 +831,16 @@ export async function addToCart(
   const youMightAlsoLike = await getCrossSellSuggestions(env, sessionId);
   const body = {
     success: true as const,
-    data: { ...cart, budgetRemaining: budget == null ? null : Math.max(0, budget - cart.total), youMightAlsoLike },
+    data: {
+      ...cart,
+      budgetRemaining: budget == null ? null : Math.max(0, budget - cart.total),
+      youMightAlsoLike,
+      // Present only when the caller's product_id didn't exist and was
+      // corrected against the session's last search results — surfaced so
+      // the correction is visible (in the audit log and to the agent) rather
+      // than silently substituting a different id than the one that was sent.
+      ...(resolvedFrom ? { correctedProductId: { from: resolvedFrom, to: productId } } : {}),
+    },
   };
   await logCall(env, sessionId, "/api/cart/add", params, body);
   await remember(200, body);
@@ -720,9 +850,11 @@ export async function addToCart(
 export async function removeFromCart(
   env: Env,
   sessionId: string,
-  productId: string,
+  productIdInput: string,
   quantityInput?: unknown,
 ): Promise<LogicResult> {
+  let productId = productIdInput;
+
   const parsedQty = parseQuantityInput(quantityInput);
   if (!parsedQty.ok) {
     const body = { success: false, error: "quantity must be an integer 1-99" };
@@ -730,14 +862,45 @@ export async function removeFromCart(
     return { status: 400, body };
   }
 
-  const existing: any = await env.DB.prepare(
-    "SELECT id, quantity, product_name FROM cart_items WHERE session_id = ? AND product_id = ?",
+  let existing: any = await env.DB.prepare(
+    "SELECT id, product_id, quantity, product_name FROM cart_items WHERE session_id = ? AND product_id = ?",
   )
     .bind(sessionId, productId)
     .first();
 
   if (!existing) {
-    const body = { success: false, error: "Item not in cart" };
+    // Resolve against what's actually IN THE CART right now — this is
+    // stronger than the add_to_cart cache lookup, since the cart itself is
+    // ground truth rather than a recent search. Matches on an id that only
+    // differs by case/punctuation, or on the product's exact name as
+    // currently shown in the cart. No fuzzy/partial matching, for the same
+    // reason as add_to_cart: guessing risks removing the wrong line item.
+    const rows = (
+      await env.DB.prepare("SELECT id, product_id, quantity, product_name FROM cart_items WHERE session_id = ?")
+        .bind(sessionId)
+        .all<any>()
+    ).results ?? [];
+
+    const normalizeId = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const normalizeName = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
+    const target = normalizeId(productId);
+    const targetName = normalizeName(productId);
+
+    const match =
+      rows.find((r: any) => normalizeId(r.product_id) === target) ??
+      rows.find((r: any) => normalizeName(r.product_name) === targetName);
+
+    if (match) {
+      existing = match;
+      productId = match.product_id;
+    }
+  }
+
+  if (!existing) {
+    const body = {
+      success: false,
+      error: `"${productId}" isn't in the cart. Call get_cart to see the exact product_id and name of what's actually there.`,
+    };
     await logCall(env, sessionId, "/api/cart/remove", { product_id: productId }, body);
     return { status: 200, body };
   }
