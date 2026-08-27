@@ -2,6 +2,8 @@ node_modules/
 .wrangler/
 frontend/dist/
 .dev.vars
+.env
 *.local
 .agents/
+gemini-agent/.env
 

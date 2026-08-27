@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "gemini-interactions-api": {
+      "source": "google-gemini/gemini-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gemini-interactions-api/SKILL.md",
+      "computedHash": "59debb63d4e1c67ebd16d273ec15829ba68a35c2e975ad9f62550461d2d888f2"
+    },
     "livekit-agents": {
       "source": "livekit/agent-skills",
       "sourceType": "github",

@@ -6,7 +6,7 @@ import { Shelf, type ShelfSource } from "./components/Shelf";
 import type { CatalogProduct } from "./components/ProductCard";
 import { VoiceDock } from "./components/VoiceDock";
 import { useAuditFeed } from "./hooks/useAuditFeed";
-import { useVoiceCall } from "./hooks/useVoiceCall";
+import { useGeminiLive } from "./hooks/useGeminiLive";
 import { RAZORPAY_KEY_ID, rupees } from "./config";
 
 interface CartData {
@@ -242,23 +242,23 @@ export default function App() {
     }
   }, [api, ensureSession, note, openRazorpay, refreshCart]);
 
-  // — Voice ——————————————————————————————————————————————————————————
-  const voice = useVoiceCall(openRazorpay);
+  // — Voice — Gemini Live (ephemeral token + 16k→24k PCM + tool calling)
+  const voice = useGeminiLive(sessionId, openRazorpay as any);
 
-  // The bridge only mints a new session if ours was missing/expired — when
-  // that happens, adopt its session id so cart polling/audit/checkout stay
-  // in sync with whatever session the voice call is actually using.
+  // Gemini hook mints its own Sanchay session if needed — adopt it so cart/audit stay in sync
   useEffect(() => {
-    if (voice.sessionId && voice.sessionId !== sessionId) {
-      sessionIdRef.current = voice.sessionId;
-      setSessionId(voice.sessionId);
+    const sid: string | null = (voice as any).sessionId ?? (voice as any).sanchaySessionId ?? null;
+    if (sid && sid !== sessionId) {
+      sessionIdRef.current = sid;
+      setSessionId(sid);
     }
-  }, [voice.sessionId, sessionId]);
+  }, [(voice as any).sessionId, (voice as any).sanchaySessionId, sessionId]);
 
   const startTalking = useCallback(async () => {
     const sid = await ensureSession();
     if (!sid) return;
-    void voice.startCall(sid, email.trim() || undefined);
+    // Gemini hook ignores args but we keep signature for compat
+    void (voice.startCall as any)(sid, email.trim() || undefined);
   }, [ensureSession, email, voice]);
 
   // — Adding ——————————————————————————————————————————————————————————

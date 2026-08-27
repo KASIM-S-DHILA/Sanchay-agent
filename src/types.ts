@@ -6,7 +6,7 @@ export interface Env {
   RAZORPAY_KEY_ID: string;
   RAZORPAY_KEY_SECRET: string;
   RAZORPAY_WEBHOOK_SECRET: string;
-  SARVAM_API_KEY: string;
+  GEMINI_API_KEY: string;
   // Merchant-configured order ceiling (paise), independent of whatever
   // budget a session/caller declares — see checkoutCart in api/logic.ts.
   // Optional; falls back to a hardcoded default if unset so the ceiling
