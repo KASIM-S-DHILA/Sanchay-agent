@@ -14,7 +14,6 @@ import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
 import { handleSeedCatalog, handleImportFlipkartCatalog } from "./api/admin";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
-import { handleVoiceWebSocket } from "./voice/bridge";
 import { checkAdminToken } from "./middleware/adminAuth";
 import type { Env } from "./types";
 
@@ -77,11 +76,6 @@ export default {
         response = await handleOpenApiSpec(request, env);
       } else if (url.pathname === "/webhooks/razorpay" && request.method === "POST") {
         response = await handleRazorpayWebhook(request, env);
-      } else if (url.pathname === "/voice" && request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
-        // Explicit 426 for non-WS requests to /voice
-        response = new Response("Expected WebSocket", { status: 426 });
-      } else if (url.pathname === "/voice") {
-        response = await handleVoiceWebSocket(request, env);
       } else if (url.pathname === "/admin/seed-catalog" && request.method === "POST") {
         response = checkAdminToken(env, request) ?? (await handleSeedCatalog(request, env));
       } else if (url.pathname === "/admin/import-flipkart" && request.method === "POST") {

@@ -18,7 +18,5 @@
     "vitest": "^4.1.11",
     "wrangler": "^4.126.0"
   },
-  "dependencies": {
-    "sarvam-conv-ai-sdk": "^0.0.42"
-  }
+  "dependencies": {}
 }

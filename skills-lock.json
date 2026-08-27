@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "livekit-agents": {
+      "source": "livekit/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/livekit-agents/SKILL.md",
+      "computedHash": "d709ee665f549428810436f97309bfcee237f5ce7801f4c0eecaf6445085f48a"
+    },
+    "voice-agents": {
+      "source": "sarvamai/skills",
+      "sourceType": "github",
+      "skillPath": "voice-agents/SKILL.md",
+      "computedHash": "bbcd25433d4cdf8810c62b225a2635e3a2d96cde2151fb9b41ac99eff92a4671"
+    }
+  }
+}
