@@ -29,6 +29,7 @@ const sanchayTools = [
       { name: "get_cart", description: "Get cart summary.", parameters: { type: "object", properties: {}, required: [] } },
       { name: "checkout", description: "Create Razorpay order.", parameters: { type: "object", properties: {}, required: [] } },
       { name: "get_order_status", description: "Check order.", parameters: { type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] } },
+      { name: "save_user_name", description: "Save shopper's first name after asking. Call once.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
     ],
   },
 ];
@@ -133,7 +134,8 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
           out = await sanchayFetch("/api/checkout", sid, {});
           const d: any = (out as any).data;
           if (d?.orderId && onCheckoutSuccess) onCheckoutSuccess(d.orderId, d.amount);
-        } else if (fc.name === "get_order_status") out = await sanchayFetch(`/api/order/${String(fc.args?.order_id)}`, sid, {});
+          } else if (fc.name === "get_order_status") out = await sanchayFetch(`/api/order/${String(fc.args?.order_id)}`, sid, {});
+          else if (fc.name === "save_user_name") out = await sanchayFetch("/api/user/name", sid, { name: String(fc.args?.name ?? "") });
       } catch (e: any) { out = { success: false, error: String(e) }; }
       res.push({ id: fc.id, name: fc.name, response: { result: JSON.stringify(out).slice(0, 4000) } });
     }
@@ -163,7 +165,7 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
         model: MODEL,
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: { parts: [{ text: "You are Sanchay, warm Indian shopping assistant. Greet FIRST in Hindi: 'Namaste! Sanchay mein aapka swagat hai — bataiye kya dekhna chahenge?' Then detect user's language and continue in that language. Be concise 1-2 sentences. Tools: search_catalog, add_to_cart, remove_from_cart, get_cart, checkout, get_order_status. Search first, speak price_display ₹, respect budget." }] },
+          systemInstruction: { parts: [{ text: "You are Sanchay, warm Indian shopping assistant. Greet FIRST in Hindi: 'Namaste! Sanchay mein aapka swagat hai — bataiye kya dekhna chahenge? Aapka naam kya hai?' If you don't know name, ask once and MUST call save_user_name with first name they give before continuing. Then detect user's language and continue in that language. Be concise 1-2 sentences. Tools: search_catalog, add_to_cart, remove_from_cart, get_cart, checkout, get_order_status, save_user_name. Search first, speak price_display ₹, respect budget." }] },
           tools: sanchayTools,
           inputAudioTranscription: {},
           outputAudioTranscription: {},

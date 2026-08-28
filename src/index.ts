@@ -13,6 +13,7 @@ import { handleAudit } from "./api/audit";
 import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
 import { handleSeedCatalog, handleImportFlipkartCatalog } from "./api/admin";
+import { handleSaveName } from "./api/user";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
 import { handleGeminiToken } from "./api/geminiToken";
 import { checkAdminToken } from "./middleware/adminAuth";
@@ -43,6 +44,8 @@ export default {
         response = await handleSessionEnd(request, env);
       } else if (url.pathname === "/api/session/budget" && request.method === "POST") {
         response = await handleSessionBudget(request, env);
+      } else if ((url.pathname === "/api/user/name") && (request.method === "POST" || request.method === "GET")) {
+        response = await handleSaveName(request, env);
       } else if (url.pathname === "/api/catalog" && (request.method === "GET" || request.method === "POST")) {
         // POST accepted: Sarvam tools are configured all-POST
         response = await handleCatalogSearch(request, env, url);
