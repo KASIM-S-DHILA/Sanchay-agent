@@ -145,17 +145,19 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
     hasGreetedRef.current = false;
     setCallState("connecting");
     try {
-      const sid = await ensureSession();
-      let token: string | null = null;
-      if (prefetchedRef.current && Date.now() < prefetchedRef.current.exp - 5000) {
-        token = prefetchedRef.current.token;
-        prefetchedRef.current = null;
-      } else {
+      // Parallelize Sanchay session + Gemini token — saves ~600ms vs sequential
+      const tokenPromise = (async () => {
+        if (prefetchedRef.current && Date.now() < prefetchedRef.current.exp - 5000) {
+          const t = prefetchedRef.current.token;
+          prefetchedRef.current = null;
+          return t;
+        }
         const r = await fetch(`${SANCHAY_BASE}/api/gemini/token`, { method: "POST" });
         const j: any = await r.json();
         if (!j.success) throw new Error(j.error);
-        token = j.data.token;
-      }
+        return j.data.token as string;
+      })();
+      const [sid, token] = await Promise.all([ensureSession(), tokenPromise]);
       const ai = new GoogleGenAI({ apiKey: token!, httpOptions: { apiVersion: "v1alpha" } } as any);
       const session: any = await (ai as any).live.connect({
         model: MODEL,
