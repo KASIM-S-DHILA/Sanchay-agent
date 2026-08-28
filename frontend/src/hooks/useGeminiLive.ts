@@ -172,14 +172,19 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
           onopen: () => {
             setCallState("connecting");
             if (!hasGreetedRef.current) {
-              hasGreetedRef.current = true;
-              try { session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." }); } catch {}
+              try {
+                session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." });
+                hasGreetedRef.current = true;
+              } catch {}
             }
           },
           onmessage: async (msg: any) => {
-            if ((msg.setupComplete || msg.serverContent?.setupComplete) && !hasGreetedRef.current) {
-              hasGreetedRef.current = true;
-              try { session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." }); } catch {}
+            const isSetup = (msg as any).setupComplete || msg.serverContent?.setupComplete || (msg as any).type === "setupComplete";
+            if (isSetup && !hasGreetedRef.current) {
+              try {
+                session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." });
+                hasGreetedRef.current = true;
+              } catch {}
               return;
             }
             if (msg.toolCall) await handleTool(msg.toolCall, session);
@@ -204,10 +209,12 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
       sessionRef.current = session;
       setTimeout(() => {
         if (!hasGreetedRef.current && sessionRef.current) {
-          hasGreetedRef.current = true;
-          try { session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." }); } catch {}
+          try {
+            session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." });
+            hasGreetedRef.current = true;
+          } catch {}
         }
-      }, 1500);
+      }, 1200);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true } });
       streamRef.current = stream;
       const ctx = new AudioContext({ sampleRate: 16000 });
