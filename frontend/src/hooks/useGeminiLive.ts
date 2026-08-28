@@ -47,8 +47,14 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
   const [callState, setCallState] = useState<CallState>("idle");
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [micLevel] = useState(0);
-  const [agentLevel] = useState(0);
+  const [micLevel, setMicLevel] = useState(0);
+  const [agentLevel, setAgentLevel] = useState(0);
+  const micAnalyserRef = useRef<AnalyserNode | null>(null);
+  const agentAnalyserRef = useRef<AnalyserNode | null>(null);
+  const levelIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const smoothedMicRef = useRef(0);
+  const smoothedAgentRef = useRef(0);
+  const callStateRef = useRef<CallState>("idle");
 
   const sessionRef = useRef<any>(null);
   const sanchaySidRef = useRef<string | null>(sessionId);
@@ -62,6 +68,48 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
   const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { sanchaySidRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { callStateRef.current = callState; }, [callState]);
+
+  /** Byte time-domain data → 0..1 loudness. Centers on 128 (silence), same
+   *  scaling factor as the legacy RMS meter so both hooks feel consistent. */
+  const analyserLevel = useCallback((analyser: AnalyserNode, buf: Uint8Array<ArrayBuffer>): number => {
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = (buf[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.min(1, Math.sqrt(sum / buf.length) * 3);
+  }, []);
+
+  const stopLevelPump = useCallback(() => {
+    if (levelIntervalRef.current) {
+      clearInterval(levelIntervalRef.current);
+      levelIntervalRef.current = null;
+    }
+    smoothedMicRef.current = 0;
+    smoothedAgentRef.current = 0;
+    setMicLevel(0);
+    setAgentLevel(0);
+  }, []);
+
+  const startLevelPump = useCallback(() => {
+    if (levelIntervalRef.current) return;
+    const micBuf = new Uint8Array(256);
+    const agentBuf = new Uint8Array(256);
+    levelIntervalRef.current = setInterval(() => {
+      const speaking = callStateRef.current === "speaking";
+      // Mic tap sits upstream of any turn-taking logic, so while the agent
+      // is speaking we mute the published mic level rather than trust the
+      // raw analyser — avoids the wave reacting to AEC leakage/room bleed.
+      const rawMic = micAnalyserRef.current && !speaking ? analyserLevel(micAnalyserRef.current, micBuf) : 0;
+      const rawAgent = agentAnalyserRef.current ? analyserLevel(agentAnalyserRef.current, agentBuf) : 0;
+      smoothedMicRef.current = smoothedMicRef.current * 0.7 + rawMic * 0.3;
+      smoothedAgentRef.current = smoothedAgentRef.current * 0.7 + rawAgent * 0.3;
+      setMicLevel(smoothedMicRef.current < 0.01 ? 0 : smoothedMicRef.current);
+      setAgentLevel(smoothedAgentRef.current < 0.01 ? 0 : smoothedAgentRef.current);
+    }, 70);
+  }, [analyserLevel]);
 
   const prefetchToken = useCallback(async () => {
     if (prefetchedRef.current && Date.now() < prefetchedRef.current.exp - 10000) return;
@@ -69,7 +117,7 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
       const r = await fetch(`${SANCHAY_BASE}/api/gemini/token`, { method: "POST" });
       const j: any = await r.json();
       if (j.success) prefetchedRef.current = { token: j.data.token, exp: new Date(j.data.newSessionExpireTime).getTime() };
-    } catch {}
+    } catch { }
   }, []);
 
   useEffect(() => {
@@ -99,6 +147,12 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
     }
     const ctx = playCtxRef.current;
     if (ctx.state === "suspended") await ctx.resume();
+    if (!agentAnalyserRef.current) {
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.connect(ctx.destination);
+      agentAnalyserRef.current = analyser;
+    }
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const pcm = new Int16Array(bytes.buffer);
     if (!pcm.length) return;
@@ -108,7 +162,7 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
     buf.getChannelData(0).set(f);
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(ctx.destination);
+    src.connect(agentAnalyserRef.current);
     const when = Math.max(playTimeRef.current, ctx.currentTime);
     src.start(when);
     playTimeRef.current = when + buf.duration;
@@ -134,8 +188,8 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
           out = await sanchayFetch("/api/checkout", sid, {});
           const d: any = (out as any).data;
           if (d?.orderId && onCheckoutSuccess) onCheckoutSuccess(d.orderId, d.amount);
-          } else if (fc.name === "get_order_status") out = await sanchayFetch(`/api/order/${String(fc.args?.order_id)}`, sid, {});
-          else if (fc.name === "save_user_name") out = await sanchayFetch("/api/user/name", sid, { name: String(fc.args?.name ?? "") });
+        } else if (fc.name === "get_order_status") out = await sanchayFetch(`/api/order/${String(fc.args?.order_id)}`, sid, {});
+        else if (fc.name === "save_user_name") out = await sanchayFetch("/api/user/name", sid, { name: String(fc.args?.name ?? "") });
       } catch (e: any) { out = { success: false, error: String(e) }; }
       res.push({ id: fc.id, name: fc.name, response: { result: JSON.stringify(out).slice(0, 4000) } });
     }
@@ -177,7 +231,7 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
               try {
                 session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." });
                 hasGreetedRef.current = true;
-              } catch {}
+              } catch { }
             }
           },
           onmessage: async (msg: any) => {
@@ -186,7 +240,7 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
               try {
                 session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." });
                 hasGreetedRef.current = true;
-              } catch {}
+              } catch { }
               return;
             }
             if (msg.toolCall) await handleTool(msg.toolCall, session);
@@ -214,13 +268,14 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
           try {
             session.sendRealtimeInput({ text: "Greet now in Hindi as instructed." });
             hasGreetedRef.current = true;
-          } catch {}
+          } catch { }
         }
       }, 1200);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true } });
       streamRef.current = stream;
       const ctx = new AudioContext({ sampleRate: 16000 });
       audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") await ctx.resume();
       await ctx.audioWorklet.addModule("/pcm-worklet.js");
       const w = new AudioWorkletNode(ctx, "pcm-capture");
       workletRef.current = w;
@@ -230,33 +285,44 @@ export function useGeminiLive(sessionId: string | null, onCheckoutSuccess?: (ord
         const b64 = btoa(String.fromCharCode(...new Uint8Array(b)));
         session.sendRealtimeInput({ audio: { data: b64, mimeType: "audio/pcm;rate=16000" } });
       };
-      ctx.createMediaStreamSource(stream).connect(w);
+      const micSource = ctx.createMediaStreamSource(stream);
+      micSource.connect(w);
+      const micAnalyser = ctx.createAnalyser();
+      micAnalyser.fftSize = 256;
+      // Read-only tap — never connected to destination, so it can't create
+      // a local feedback loop.
+      micSource.connect(micAnalyser);
+      micAnalyserRef.current = micAnalyser;
+      startLevelPump();
     } catch (e: any) {
       setError(e?.message ?? String(e));
       setCallState("idle");
     }
-  }, [ensureSession, handleTool, playPcm]);
+  }, [ensureSession, handleTool, playPcm, startLevelPump]);
 
   const stopCall = useCallback(() => {
     hasGreetedRef.current = false;
-    try { sessionRef.current?.close(); } catch {}
+    try { sessionRef.current?.close(); } catch { }
     sessionRef.current = null;
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
-    try { audioCtxRef.current?.close(); } catch {}
+    try { audioCtxRef.current?.close(); } catch { }
     audioCtxRef.current = null;
-    try { playCtxRef.current?.close(); } catch {}
+    try { playCtxRef.current?.close(); } catch { }
     playCtxRef.current = null;
     workletRef.current = null;
+    micAnalyserRef.current = null;
+    agentAnalyserRef.current = null;
+    stopLevelPump();
     if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
     setCallState("idle");
-  }, []);
+  }, [stopLevelPump]);
 
   const dismissError = useCallback(() => setError(null), []);
   useEffect(() => () => stopCall(), [stopCall]);
 
   return {
-    callState, transcripts, error, micLevel: 0, agentLevel: 0,
+    callState, transcripts, error, micLevel, agentLevel,
     sessionId: sanchaySidRef.current ?? sessionId ?? null,
     startCall: startCall as unknown as (sid?: string, email?: string) => Promise<void>,
     stopCall, dismissError, prefetchToken, sanchaySessionId: sanchaySidRef.current,
