@@ -1,4 +1,4 @@
-import { handleSessionStart, handleSessionEnd, handleSessionBudget } from "./api/session";
+import { handleSessionStart, handleSessionEnd, handleSessionBudget, handleSessionHistory } from "./api/session";
 import { handleCatalogSearch } from "./api/catalog";
 import {
   handleCartAdd,
@@ -14,6 +14,7 @@ import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
 import { handleSeedCatalog, handleImportFlipkartCatalog } from "./api/admin";
 import { handleSaveName } from "./api/user";
+import { handleAuthOtpSend, handleAuthOtpVerify } from "./api/auth";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
 import { handleGeminiToken } from "./api/geminiToken";
 import { checkAdminToken } from "./middleware/adminAuth";
@@ -22,7 +23,7 @@ import type { Env } from "./types";
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, x-session-id",
+  "Access-Control-Allow-Headers": "Content-Type, x-session-id, Authorization",
 };
 
 export default {
@@ -44,8 +45,14 @@ export default {
         response = await handleSessionEnd(request, env);
       } else if (url.pathname === "/api/session/budget" && request.method === "POST") {
         response = await handleSessionBudget(request, env);
+      } else if (url.pathname === "/api/session/history" && request.method === "GET") {
+        response = await handleSessionHistory(request, env);
       } else if ((url.pathname === "/api/user/name") && (request.method === "POST" || request.method === "GET")) {
         response = await handleSaveName(request, env);
+      } else if (url.pathname === "/api/auth/otp" && request.method === "POST") {
+        response = await handleAuthOtpSend(request, env);
+      } else if (url.pathname === "/api/auth/otp/verify" && request.method === "POST") {
+        response = await handleAuthOtpVerify(request, env);
       } else if (url.pathname === "/api/catalog" && (request.method === "GET" || request.method === "POST")) {
         // POST accepted: Sarvam tools are configured all-POST
         response = await handleCatalogSearch(request, env, url);

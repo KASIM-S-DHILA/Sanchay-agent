@@ -6,6 +6,25 @@
     "nodejs_compat"
   ],
   "main": "./src/index.ts",
+  // Keep the workers.dev URL alive — Wrangler disables it by default the
+  // moment any custom route/domain is configured below, which would have
+  // silently broken the site's existing, already-working address.
+  "workers_dev": true,
+  // Serves the Worker on sanchay.store in addition to the workers.dev
+  // subdomain. custom_domain:true provisions the DNS record + TLS cert
+  // automatically since the zone is already on Cloudflare — but only once
+  // any pre-existing A/AAAA/CNAME records for the hostname are removed
+  // (Cloudflare refuses to override externally-managed DNS records).
+  "routes": [
+    {
+      "pattern": "sanchay.store",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.sanchay.store",
+      "custom_domain": true
+    }
+  ],
   "rules": [
     {
       "type": "Text",
@@ -39,6 +58,10 @@
   "observability": {
     "enabled": true
   },
+  // OTP sign-in emails go through Resend's REST API (see sendOtpEmail in
+  // src/api/auth.ts) rather than Cloudflare Email Sending, which requires
+  // a paid zone plan. RESEND_API_KEY is a secret (wrangler secret put),
+  // no binding needed here.
   // Non-secret config. MERCHANT_MAX_ORDER_PAISE caps any single order
   // regardless of session/caller-declared budget (see checkoutCart in
   // src/api/logic.ts) — falls back to a hardcoded default if omitted.

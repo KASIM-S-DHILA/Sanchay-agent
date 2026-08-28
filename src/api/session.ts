@@ -1,7 +1,8 @@
 import type { Env } from "../types";
 import { logApiCall } from "../middleware/audit";
 import { validateSession, logAuthFailure } from "../middleware/session";
-import { startSession, endSession, setBudget } from "./logic";
+import { checkRateLimit, rateLimitedResponse } from "../middleware/rateLimit";
+import { startSession, endSession, setBudget, getPurchaseHistory } from "./logic";
 
 export async function handleSessionStart(request: Request, env: Env): Promise<Response> {
   let body: { user_email?: string; budget?: number } = {};
@@ -56,12 +57,14 @@ export async function handleSessionEnd(request: Request, env: Env): Promise<Resp
 }
 
 /**
- * Sets a spending cap on the live session from the browser UI.
- *
- * Delegates entirely to setBudget() — the same function the `set_budget`
- * voice tool dispatches to — so a budget typed on screen and a budget spoken
- * aloud get identical validation, identical rejection messages, and identical
- * audit rows. No validation is duplicated here on purpose.
+ * Sets, changes, or clears the session's spending cap — used by both the
+ * browser's cap form and the Gemini Live `set_budget` voice tool (see
+ * useGeminiLive.ts). Delegates entirely to setBudget(), so a budget typed
+ * on screen and a budget spoken aloud get identical validation, identical
+ * rejection messages, and identical audit rows. No validation is
+ * duplicated here on purpose. The cap is always session-scoped — it never
+ * touches the account, so it is never "permanent": a fresh session (new
+ * browser, new sign-in, or just after this one ends) starts uncapped.
  */
 export async function handleSessionBudget(request: Request, env: Env): Promise<Response> {
   const session = await validateSession(env, request);
@@ -70,11 +73,36 @@ export async function handleSessionBudget(request: Request, env: Env): Promise<R
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
   }
 
-  let body: { budget?: unknown } = {};
+  // Loosely throttled — a shopper genuinely might adjust a spoken budget
+  // several times in one conversation ("actually make it 3000", "no,
+  // 2500"), so this exists to catch a runaway loop, not normal back-and-forth.
+  const limit = await checkRateLimit(env, `set_budget:session:${session.id}`, 20, 60);
+  if (!limit.allowed) return rateLimitedResponse();
+
+  let body: { budget?: unknown; clear?: boolean } = {};
   try {
     body = await request.json();
   } catch { }
 
-  const result = await setBudget(env, session.id, body.budget);
+  const result = await setBudget(env, session.id, body.budget, body.clear === true);
   return Response.json(result.body, { status: result.status });
+}
+
+/**
+ * Last 2 paid orders for this session's account — see getPurchaseHistory
+ * in api/logic.ts for why this reads `orders` directly rather than
+ * user_preferences.purchase_history. Used by useGeminiLive.ts to greet a
+ * returning shopper with something like "last time you got a hoodie" —
+ * read-only, no rate limiting needed beyond the shared per-session
+ * request pattern every other GET here already has.
+ */
+export async function handleSessionHistory(request: Request, env: Env): Promise<Response> {
+  const session = await validateSession(env, request);
+  if (!session) {
+    await logAuthFailure(env, request, "/api/session/history");
+    return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
+  }
+
+  const history = await getPurchaseHistory(env, session.id);
+  return Response.json({ success: true, data: { orders: history } });
 }

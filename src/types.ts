@@ -16,6 +16,21 @@ export interface Env {
   // middleware/adminAuth.ts. Optional; if unset, those endpoints are
   // rejected entirely rather than left open.
   ADMIN_TOKEN?: string;
+  // HS256 signing secret for auth JWTs (see middleware/auth.ts). Optional in
+  // type only so local dev without the secret set still boots; getAuthUser/
+  // signJWT fall back to a fixed dev string, which must NEVER be reachable
+  // in prod — always set this via `wrangler secret put JWT_SIGNING_KEY`.
+  JWT_SIGNING_KEY?: string;
+  // Server-side secret for verifying Cloudflare Turnstile tokens on
+  // /api/auth/otp — see api/auth.ts. If unset, Turnstile verification is
+  // skipped (dev convenience); production must set this.
+  TURNSTILE_SECRET_KEY?: string;
+  // Resend API key for OTP sign-in emails (src/api/auth.ts sendOtpEmail).
+  // Cloudflare Email Sending needs a paid zone plan, so Resend (free tier:
+  // 3,000/month) is used instead — a plain HTTPS POST, no binding needed.
+  // Optional in type only so local dev without the secret set still boots;
+  // sendOtpEmail falls back to logging the code when unset.
+  RESEND_API_KEY?: string;
 }
 
 export interface CartItem {
@@ -46,6 +61,7 @@ export interface Session {
 }
 
 export interface UserPreferences {
+  name: string | null;
   preferredCategories: string[];
   budgetPreference: number | null;
   previousProducts: string[];

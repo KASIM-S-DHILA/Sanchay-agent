@@ -5,6 +5,40 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT
 );
 
+-- One account per email. Without this, verifying the same email twice (e.g.
+-- two browser tabs racing an OTP verify) could create two `users` rows for
+-- the same person instead of finding-or-creating a single one.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+-- One-time codes for email-based sign-in. code_hash is SHA-256 of the raw
+-- 6-digit code — the raw code is never stored, so a DB read alone can't be
+-- used to sign in as someone else. attempts caps guessing per minted code
+-- (5 wrong tries invalidates it); consumed_at makes a code single-use.
+CREATE TABLE IF NOT EXISTS otps (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  purpose TEXT NOT NULL DEFAULT 'sign_in',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_otps_email ON otps(email);
+
+-- Fixed-window rate limiting, shared by otp send/verify, token mint, and
+-- checkout. `key` encodes both the action and the caller (e.g.
+-- "otp_send:ip:1.2.3.4" or "checkout:session:<id>") so different actions
+-- never share a counter. One row per active window; a request past
+-- window_start + window_seconds starts a fresh window instead of reading
+-- this row, so expired windows don't need a cleanup job to stay correct.
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 0,
+  window_start TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT,
@@ -34,7 +68,14 @@ CREATE TABLE IF NOT EXISTS orders (
   status TEXT,
   items_json TEXT,
   payment_url TEXT,
-  created_at TEXT
+  created_at TEXT,
+  -- Set the instant reserved stock is released for this order (on
+  -- payment.failed, or on expiry via reconcileExpiredOrders) — guards
+  -- against releasing the same reservation twice. payment.failed marks the
+  -- order 'attempted' (not 'cancelled', so a retry can reuse it) rather
+  -- than 'cancelled', so without this flag a later expiry pass would see
+  -- that still-'attempted' order and credit its stock back a second time.
+  stock_released INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS intent_mandates (
@@ -76,6 +117,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id TEXT PRIMARY KEY,
+  name TEXT,
   preferred_categories TEXT,
   budget_preference INTEGER,
   previous_products TEXT,
@@ -121,6 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_api_log_ts ON api_call_log(created_at);
 
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id TEXT PRIMARY KEY,
+  name TEXT,
   preferred_categories TEXT,
   budget_preference INTEGER,
   previous_products TEXT,
