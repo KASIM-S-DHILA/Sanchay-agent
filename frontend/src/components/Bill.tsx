@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { rupees } from "../config";
 
 export interface BillItem {
@@ -25,6 +25,14 @@ export interface PaymentState {
  * they pay. Nothing here is decorative — the leader dots tie a name to a
  * number, and the stamp appears only once money has actually moved.
  */
+export interface PendingOrderInfo {
+  orderId: string;
+  amountPaise: number;
+  paymentUrl: string | null;
+  expiresInSeconds: number;
+  lastAttemptFailed: boolean;
+}
+
 export function Bill({
   sessionId,
   items,
@@ -32,10 +40,12 @@ export function Bill({
   count,
   budgetRemaining,
   payment,
+  pendingOrder,
   busy,
   email,
   onEmailChange,
   onSetBudget,
+  onClearBudget,
   onPay,
   onResumePayment,
 }: {
@@ -45,15 +55,40 @@ export function Bill({
   count: number;
   budgetRemaining: number | null;
   payment: PaymentState | null;
+  pendingOrder: PendingOrderInfo | null;
   busy: boolean;
   email: string;
   onEmailChange: (value: string) => void;
   onSetBudget: (rupeeValue: number) => Promise<boolean>;
+  onClearBudget: () => Promise<boolean>;
   onPay: () => void;
   onResumePayment: () => void;
 }) {
   const [capInput, setCapInput] = useState("");
   const [savingCap, setSavingCap] = useState(false);
+  const [clearingCap, setClearingCap] = useState(false);
+
+  // Server-authoritative countdown (expiresInSeconds comes from
+  // reconcileExpiredOrders' own clock, refreshed every ~3s by the cart
+  // poll) ticked locally between polls so the display counts down
+  // smoothly instead of jumping every 3 seconds. Reset whenever the
+  // underlying order or the server's own number changes.
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(
+    pendingOrder?.expiresInSeconds ?? null,
+  );
+  useEffect(() => {
+    setSecondsLeft(pendingOrder?.expiresInSeconds ?? null);
+  }, [pendingOrder?.orderId, pendingOrder?.expiresInSeconds]);
+  useEffect(() => {
+    if (secondsLeft === null || secondsLeft <= 0) return;
+    const t = setInterval(() => setSecondsLeft((s) => (s === null ? null : Math.max(0, s - 1))), 1000);
+    return () => clearInterval(t);
+  }, [secondsLeft !== null]);
+
+  const countdownLabel =
+    secondsLeft === null
+      ? null
+      : `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, "0")}`;
 
   // getCart reports what's left, not the cap itself — the cap is the two
   // added back together.
@@ -72,6 +107,12 @@ export function Bill({
     const ok = await onSetBudget(value);
     setSavingCap(false);
     if (ok) setCapInput("");
+  };
+
+  const clearCap = async () => {
+    setClearingCap(true);
+    await onClearBudget();
+    setClearingCap(false);
   };
 
   return (
@@ -140,8 +181,12 @@ export function Bill({
               </div>
               <p className="cap-note">
                 Sanchay refuses anything that would push the bill past this. Say “make my budget
-                three thousand” to change it.
+                three thousand” to change it, or “remove my budget” to lift it — only for this
+                visit, it's never remembered for next time.
               </p>
+              <button type="button" className="cap-clear" onClick={() => void clearCap()} disabled={clearingCap}>
+                {clearingCap ? "Removing" : "Remove cap"}
+              </button>
             </>
           ) : (
             <>
@@ -158,7 +203,7 @@ export function Bill({
                   {savingCap ? "Setting" : "Set cap"}
                 </button>
               </form>
-              <p className="cap-note">No cap set. Set one and every add is checked against it.</p>
+              <p className="cap-note">No cap set for this visit. Set one and every add is checked against it.</p>
             </>
           )}
         </div>
@@ -177,7 +222,12 @@ export function Bill({
         <div className="pay">
           <div className="pay-pending">
             <span className="pay-pending-text">
-              {payment!.stage === "dismissed" ? (
+              {pendingOrder?.lastAttemptFailed ? (
+                <>
+                  Your last attempt didn't go through — <strong>{rupees(payment!.amount)}</strong> is
+                  still due. Try a different card or method.
+                </>
+              ) : payment!.stage === "dismissed" ? (
                 <>
                   You closed the payment window before it finished. Nothing was charged and the bill
                   is untouched — <strong>{rupees(payment!.amount)}</strong> is still due.
@@ -189,8 +239,19 @@ export function Bill({
                 </>
               )}
             </span>
+            {countdownLabel && (
+              <span className={`pay-countdown ${secondsLeft !== null && secondsLeft <= 60 ? "is-urgent" : ""}`}>
+                {secondsLeft === 0
+                  ? "Reservation expiring — refresh in a moment"
+                  : `Held for ${countdownLabel} more`}
+              </span>
+            )}
             <button type="button" className="btn btn-sm" onClick={onResumePayment}>
-              {payment!.stage === "dismissed" ? "Resume payment" : "Reopen payment window"}
+              {pendingOrder?.lastAttemptFailed
+                ? "Retry payment"
+                : payment!.stage === "dismissed"
+                  ? "Resume payment"
+                  : "Reopen payment window"}
             </button>
           </div>
         </div>

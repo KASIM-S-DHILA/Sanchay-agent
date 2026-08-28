@@ -1122,6 +1122,17 @@ input {
   font-weight: 600;
 }
 
+.pay-countdown {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #7A3906;
+  letter-spacing: 0.02em;
+}
+
+.pay-countdown.is-urgent {
+  color: #B3261E;
+}
+
 /* — PAID. The single flourish on the page, and it only lands when Razorpay
      has actually confirmed the money moved. — */
 .bill-paid {
@@ -1587,4 +1598,238 @@ input {
   .meter-bar {
     transition: none;
   }
+}
+
+
+/* — Auth gate: email/OTP sign-in offered alongside guest shopping. Sits at
+     the far right of the topbar, never blocking anything below it. — */
+.auth-gate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.auth-gate-signed-in {
+  gap: 8px;
+}
+
+.auth-gate-email {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.auth-gate-guest {
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  padding: 0;
+}
+
+.auth-gate-guest:hover {
+  color: var(--ink-2);
+}
+
+.auth-gate-reopen {
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: var(--r1);
+  padding: 5px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.auth-gate-reopen:hover {
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+.auth-gate-open {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.auth-gate-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-gate-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.auth-gate-form .input {
+  width: 190px;
+  padding: 6px 9px;
+  font-size: 0.8125rem;
+}
+
+.auth-gate-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auth-gate-cancel {
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.auth-gate-cancel:hover {
+  color: var(--ink-2);
+}
+
+.auth-gate-turnstile {
+  flex-shrink: 0;
+}
+
+.auth-gate-error {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--error-wash);
+  color: var(--error);
+  border: 1px solid var(--error);
+  border-radius: var(--r2);
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+@media (max-width: 720px) {
+  .auth-gate-label {
+    display: none;
+  }
+
+  .auth-gate-form .input {
+    width: 140px;
+  }
+}
+
+
+/* — Entry gate: full-screen, blocks everything until the shopper chooses
+     sign-in or guest. Renders in place of the whole app (see App.tsx),
+     not layered over it — there is nothing behind it to layer over until
+     the choice is made. — */
+.entry-gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--counter);
+  padding: 24px;
+}
+
+.entry-gate-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r3);
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-shadow: 0 8px 30px rgba(20, 24, 29, 0.08);
+}
+
+.entry-gate-mark {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  text-align: center;
+}
+
+.entry-gate-lead {
+  font-size: 0.875rem;
+  color: var(--muted);
+  text-align: center;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.entry-gate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.entry-gate-actions .pay-btn {
+  width: 100%;
+}
+
+.entry-gate-guest {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  padding: 6px 0;
+  text-align: center;
+}
+
+.entry-gate-guest:hover {
+  color: var(--ink-2);
+}
+
+.entry-gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entry-gate-form .input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 0.9375rem;
+}
+
+.entry-gate-error-inline {
+  position: static;
+  justify-content: space-between;
+}
+
+
+.cap-clear {
+  margin-top: 4px;
+  font-size: 0.6875rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  padding: 0;
+  align-self: flex-start;
+}
+
+.cap-clear:hover {
+  color: var(--ink-2);
+}
+
+.cap-clear:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

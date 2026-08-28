@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { ActivityLog } from "./components/ActivityLog";
+import { AuthGate } from "./components/AuthGate";
+import { EntryGate } from "./components/EntryGate";
 import { Bill, type BillItem, type PaymentState } from "./components/Bill";
 import { CrossSell, type CrossSellSuggestion } from "./components/CrossSell";
 import { Shelf, type ShelfSource } from "./components/Shelf";
 import type { CatalogProduct } from "./components/ProductCard";
 import { VoiceDock } from "./components/VoiceDock";
 import { useAuditFeed } from "./hooks/useAuditFeed";
+import { useAuth } from "./hooks/useAuth";
 import { useGeminiLive } from "./hooks/useGeminiLive";
 import { RAZORPAY_KEY_ID, rupees } from "./config";
 
@@ -15,6 +18,13 @@ interface CartData {
   count: number;
   budgetRemaining?: number | null;
   youMightAlsoLike?: CrossSellSuggestion[];
+  pendingOrder?: {
+    orderId: string;
+    amountPaise: number;
+    paymentUrl: string | null;
+    expiresInSeconds: number;
+    lastAttemptFailed: boolean;
+  } | null;
 }
 
 interface Note {
@@ -28,6 +38,8 @@ declare global {
     Razorpay: any;
   }
 }
+
+const SESSION_STORAGE_KEY = "sanchay_session_id";
 
 /** The catalog returns `id` when listing and `productId` when searching. */
 function normalizeProducts(raw: any[]): CatalogProduct[] {
@@ -45,7 +57,13 @@ function normalizeProducts(raw: any[]): CatalogProduct[] {
 
 export default function App() {
   const [email, setEmail] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  // Persisted across reload — without this, every reload silently started
+  // a brand-new anonymous session (a fresh gemini-<ts>@live.local user_id),
+  // orphaning whatever cart/name/history the shopper had, even if they were
+  // signed in. The session is validated against the backend on load (see
+  // the effect below); an expired/invalid stored id just falls back to
+  // starting fresh, same as having none.
+  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem(SESSION_STORAGE_KEY));
   const [cart, setCart] = useState<CartData | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [view, setView] = useState<"shop" | "bill">("shop");
@@ -63,8 +81,30 @@ export default function App() {
 
   const sessionIdRef = useRef<string | null>(null);
   sessionIdRef.current = sessionId;
+
+  // Single sync point for persisting sessionId — every setSessionId call
+  // above (ensureSession, sign-out, session validation) reaches storage
+  // through this instead of each needing its own write.
+  useEffect(() => {
+    if (sessionId) localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+    else localStorage.removeItem(SESSION_STORAGE_KEY);
+  }, [sessionId]);
+
+  const auth = useAuth();
+  const authTokenRef = useRef<string | null>(null);
+  authTokenRef.current = auth.token;
   const noteSeq = useRef(0);
   const handledEventsRef = useRef<Set<string>>(new Set());
+  // The audit feed returns the session's FULL history on every poll, not
+  // just new rows — on a fresh page load (or after a reload) the very
+  // first poll can carry a checkout event from minutes/hours ago that was
+  // already paid or already abandoned. Without this guard, that first poll
+  // reopened the Razorpay modal for it every single time. The fix: whatever
+  // is already sitting in the feed the first time we see it (per session)
+  // is marked handled silently, with no side effects — only events that
+  // show up in a LATER poll (i.e. genuinely happened during this page's
+  // lifetime) are acted on.
+  const auditFeedInitializedRef = useRef<string | null>(null);
   // Queries this browser issued, so a catalog lookup we caused isn't mistaken
   // for one the agent caused when it comes back around on the audit feed.
   const ownQueriesRef = useRef<Map<string, number>>(new Map());
@@ -80,11 +120,13 @@ export default function App() {
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const sid = sessionIdRef.current;
+    const token = authTokenRef.current;
     const res = await fetch(path, {
       ...init,
       headers: {
         "Content-Type": "application/json",
         ...(sid ? { "x-session-id": sid } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -92,13 +134,30 @@ export default function App() {
   }, []);
 
   // — Session ————————————————————————————————————————————————————————
+  // Tracks the in-flight validation of whatever sessionId was restored
+  // from storage on mount (see the effect below) — ensureSession awaits
+  // this before trusting sessionIdRef.current, closing a race where a
+  // stale/expired session id (still sitting in the ref because validation
+  // hadn't resolved yet) got handed to a voice call or cart action, which
+  // then 401ed on every single request against it instead of silently
+  // starting fresh. null once resolved; also null if there was nothing
+  // to validate (no stored session at all).
+  const sessionValidationRef = useRef<Promise<void> | null>(null);
+
   // One entry point. Anything that needs a counter opens one rather than
   // telling the shopper to go and press a different button first.
   const ensureSession = useCallback(async (): Promise<string | null> => {
+    if (sessionValidationRef.current) await sessionValidationRef.current;
     if (sessionIdRef.current) return sessionIdRef.current;
+    // A signed-in shopper's fresh session should start already tied to
+    // their real account, not the separate "keep a copy of this bill"
+    // field — otherwise every new session (e.g. after a stored session id
+    // was cleared or expired) would orphan itself from their name/history
+    // even though they're signed in.
+    const startEmail = auth.email ?? email.trim() ?? null;
     const data = await api("/api/session/start", {
       method: "POST",
-      body: JSON.stringify({ user_email: email.trim() || null }),
+      body: JSON.stringify({ user_email: startEmail || null }),
     });
     if (data?.success) {
       sessionIdRef.current = data.data.sessionId;
@@ -107,7 +166,32 @@ export default function App() {
     }
     note(data?.error ?? "Couldn't open a counter. Reload and try again.", "error");
     return null;
-  }, [api, email, note]);
+  }, [api, auth.email, email, note]);
+
+  // Validates whatever session id was restored from storage — a stale one
+  // (expired, or ended via sign-out on another device/tab) must not sit
+  // around looking valid while every real call against it 401s. On
+  // failure, clear it so the next ensureSession() call starts fresh rather
+  // than silently reusing a dead id forever. ensureSession awaits this
+  // promise before reading sessionIdRef, so nothing can act on the stale
+  // id in the window between mount and this check resolving.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    sessionValidationRef.current = (async () => {
+      const data = await api("/api/cart");
+      if (!cancelled && data?.success === false) {
+        sessionIdRef.current = null;
+        setSessionId(null);
+      }
+      sessionValidationRef.current = null;
+    })();
+    return () => { cancelled = true; };
+    // Runs once per mount against whatever sessionId was restored from
+    // storage — not on every sessionId change, which would re-validate a
+    // session this same tab just created moments ago.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // — Shelf ——————————————————————————————————————————————————————————
   const searchShelf = useCallback(
@@ -159,6 +243,40 @@ export default function App() {
     const data = await api("/api/cart");
     if (data?.success) setCart(data.data);
   }, [api]);
+
+  // Restores the "resume payment" banner on reload. `payment` is plain
+  // React state — it doesn't survive a reload, so without this a shopper
+  // who started paying, closed the tab, and came back sees a bare cart
+  // with no indication an order is already in flight (clicking Pay again
+  // is actually safe — checkoutCart's idempotency reuses the same order —
+  // but nothing on screen says so). Only acts once per pending order id,
+  // and never overrides an already-"paid" local state (e.g. if this same
+  // tab just confirmed payment moments before the next 3s poll lands).
+  const restoredPendingOrderRef = useRef<string | null>(null);
+  useEffect(() => {
+    const pending = cart?.pendingOrder;
+    if (pending) {
+      if (restoredPendingOrderRef.current === pending.orderId) return;
+      setPayment((prev) => {
+        if (prev?.stage === "paid") return prev;
+        if (prev?.orderId === pending.orderId) return prev;
+        return { orderId: pending.orderId, amount: pending.amountPaise, stage: "dismissed" };
+      });
+      restoredPendingOrderRef.current = pending.orderId;
+      return;
+    }
+    // No pending order left server-side (reconcileExpiredOrders runs on
+    // every /api/cart read, so this fires within ~3s of the 15-minute
+    // window closing). If the bill is still showing a "waiting"/"dismissed"
+    // banner for that now-expired order, clear it — the order is
+    // `cancelled` and stock is back on the shelf, so nothing left to wait
+    // for. A `paid` banner is never cleared this way: it survives because
+    // it isn't a pendingOrder anymore anyway once paid.
+    if (restoredPendingOrderRef.current) {
+      restoredPendingOrderRef.current = null;
+      setPayment((prev) => (prev && prev.stage !== "paid" ? null : prev));
+    }
+  }, [cart?.pendingOrder]);
 
   // — Payment ————————————————————————————————————————————————————————
   /** Razorpay's handler fires the moment the shopper finishes, but the order
@@ -223,6 +341,29 @@ export default function App() {
     if (payment && payment.stage !== "paid") openRazorpay(payment.orderId, payment.amount);
   }, [payment, openRazorpay]);
 
+  // — Auth ————————————————————————————————————————————————————————————
+  // A session is opened first if none exists yet, so signing in before ever
+  // talking or shopping still has something to attach to. The backend
+  // decides whether to reattach THAT session to the account or resume an
+  // already-active one from an earlier sign-in (see handleAuthOtpVerify) —
+  // either way, whatever session id it returns becomes the session going
+  // forward, replacing whatever was here before.
+  const handleVerifyOtp = useCallback(
+    async (verifyEmail: string, code: string): Promise<boolean> => {
+      const sid = await ensureSession();
+      const resolvedSessionId = await auth.verifyOtp(verifyEmail, code, sid);
+      if (!resolvedSessionId) return false;
+      if (resolvedSessionId !== sessionIdRef.current) {
+        sessionIdRef.current = resolvedSessionId;
+        setSessionId(resolvedSessionId);
+        setCart(null); // stale cart from whatever session was active before
+      }
+      note(`Signed in as ${verifyEmail}`, "ok");
+      return true;
+    },
+    [auth, ensureSession, note],
+  );
+
   const handlePay = useCallback(async () => {
     const sid = await ensureSession();
     if (!sid) return;
@@ -242,24 +383,35 @@ export default function App() {
     }
   }, [api, ensureSession, note, openRazorpay, refreshCart]);
 
-  // — Voice — Gemini Live (ephemeral token + 16k→24k PCM + tool calling)
-  const voice = useGeminiLive(sessionId, openRazorpay as any);
+  // — Voice — Gemini Live (ephemeral token + 16k→24k PCM + tool calling).
+  // App.tsx is the ONLY owner of session identity — the hook takes a
+  // session id as a plain argument to startCall and never creates, caches,
+  // or hands one back. No "adopt session" reconciliation needed: there is
+  // only ever one copy of the session id to begin with.
+  const voice = useGeminiLive(openRazorpay as any);
 
-  // Gemini hook mints its own Sanchay session if needed — adopt it so cart/audit stay in sync
-  useEffect(() => {
-    const sid: string | null = (voice as any).sessionId ?? (voice as any).sanchaySessionId ?? null;
-    if (sid && sid !== sessionId) {
-      sessionIdRef.current = sid;
-      setSessionId(sid);
-    }
-  }, [(voice as any).sessionId, (voice as any).sanchaySessionId, sessionId]);
+  // Sign-out has to end the session server-side too, not just drop the
+  // token — otherwise the shopper keeps talking/shopping on the exact same
+  // session (still attributed to their real account's user_id in
+  // sessions/user_preferences) even though the UI now claims "signed out".
+  // Clearing sessionId here means the next thing that needs a counter
+  // (ensureSession) opens a genuinely fresh anonymous one.
+  const handleSignOut = useCallback(() => {
+    voice.stopCall();
+    const sid = sessionIdRef.current;
+    if (sid) void api("/api/session/end", { method: "POST" }).catch(() => { });
+    sessionIdRef.current = null;
+    setSessionId(null);
+    setCart(null);
+    auth.signOut();
+    note("Signed out. Starting a fresh guest session.", "ok");
+  }, [api, auth, note, voice]);
 
   const startTalking = useCallback(async () => {
     const sid = await ensureSession();
     if (!sid) return;
-    // Gemini hook ignores args but we keep signature for compat
-    void (voice.startCall as any)(sid, email.trim() || undefined);
-  }, [ensureSession, email, voice]);
+    void voice.startCall(sid);
+  }, [ensureSession, voice]);
 
   // — Adding ——————————————————————————————————————————————————————————
   const handleAddToCart = useCallback(
@@ -287,6 +439,22 @@ export default function App() {
     [api, ensureSession, note],
   );
 
+  const handleClearBudget = useCallback(async (): Promise<boolean> => {
+    const sid = await ensureSession();
+    if (!sid) return false;
+    const data = await api("/api/session/budget", {
+      method: "POST",
+      body: JSON.stringify({ clear: true }),
+    });
+    if (data?.success) {
+      note("Cap removed for this visit. Nothing to watch against anymore.", "ok");
+      void refreshCart();
+      return true;
+    }
+    note(data?.error ?? "Couldn't remove that cap.", "warn");
+    return false;
+  }, [api, ensureSession, note, refreshCart]);
+
   const handleSetBudget = useCallback(
     async (rupeeValue: number): Promise<boolean> => {
       const sid = await ensureSession();
@@ -296,7 +464,7 @@ export default function App() {
         body: JSON.stringify({ budget: rupeeValue }),
       });
       if (data?.success) {
-        note(`Cap set at ${rupees(data.data.budget)}. Nothing can push the bill past it.`, "ok");
+        note(`Cap set at ${rupees(data.data.budget)} for this visit. Nothing can push the bill past it.`, "ok");
         void refreshCart();
         return true;
       }
@@ -310,6 +478,15 @@ export default function App() {
   const { events } = useAuditFeed(sessionId);
 
   useEffect(() => {
+    // First poll after a (re)load / session switch: the feed already
+    // contains this session's whole history. Mark it all handled without
+    // acting on any of it — only events arriving on a poll AFTER this one
+    // are new enough to react to (e.g. auto-opening the Razorpay modal).
+    if (auditFeedInitializedRef.current !== sessionId) {
+      auditFeedInitializedRef.current = sessionId;
+      for (const e of events) handledEventsRef.current.add(e.id);
+      return;
+    }
     for (const e of events) {
       if (handledEventsRef.current.has(e.id)) continue;
       handledEventsRef.current.add(e.id);
@@ -340,13 +517,27 @@ export default function App() {
         setShelfError(null);
       }
     }
-  }, [events, openRazorpay]);
+  }, [events, openRazorpay, sessionId]);
 
   const items = cart?.items ?? [];
   const total = cart?.total ?? 0;
   const count = cart?.count ?? 0;
   const budgetRemaining = cart?.budgetRemaining ?? null;
   const cap = budgetRemaining === null ? null : total + budgetRemaining;
+
+  if (!auth.hasEnteredApp) {
+    return (
+      <EntryGate
+        sending={auth.sending}
+        verifying={auth.verifying}
+        error={auth.error}
+        onSendOtp={auth.sendOtp}
+        onVerifyOtp={handleVerifyOtp}
+        onDismissError={auth.dismissError}
+        onContinueAsGuest={auth.continueAsGuest}
+      />
+    );
+  }
 
   return (
     <div className="counter">
@@ -376,6 +567,19 @@ export default function App() {
               </span>
             </div>
           </div>
+          <AuthGate
+            isSignedIn={auth.isSignedIn}
+            hasChosenGuest={auth.hasChosenGuest}
+            email={auth.email}
+            sending={auth.sending}
+            verifying={auth.verifying}
+            error={auth.error}
+            onSendOtp={auth.sendOtp}
+            onVerifyOtp={handleVerifyOtp}
+            onSignOut={handleSignOut}
+            onDismissError={auth.dismissError}
+            onContinueAsGuest={auth.continueAsGuest}
+          />
         </div>
       </header>
 
@@ -446,10 +650,12 @@ export default function App() {
             count={count}
             budgetRemaining={budgetRemaining}
             payment={payment}
+            pendingOrder={cart?.pendingOrder ?? null}
             busy={checkoutBusy}
             email={email}
             onEmailChange={setEmail}
             onSetBudget={handleSetBudget}
+            onClearBudget={handleClearBudget}
             onPay={() => void handlePay()}
             onResumePayment={resumePayment}
           />

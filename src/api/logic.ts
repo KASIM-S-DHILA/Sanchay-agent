@@ -70,6 +70,7 @@ export async function startSession(
       .first();
     userPreferences = row
       ? {
+        name: row.name ?? null,
         preferredCategories: JSON.parse(row.preferred_categories || "[]"),
         budgetPreference: row.budget_preference ?? null,
         previousProducts: JSON.parse(row.previous_products || "[]"),
@@ -78,6 +79,7 @@ export async function startSession(
         lastActive: row.last_active ?? null,
       }
       : {
+        name: null,
         preferredCategories: [],
         budgetPreference: null,
         previousProducts: [],
@@ -86,8 +88,8 @@ export async function startSession(
         lastActive: null,
       };
     await env.DB.prepare(
-      `INSERT INTO user_preferences (user_id, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO user_preferences (user_id, name, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          session_count = session_count + 1,
          last_active = excluded.last_active,
@@ -95,6 +97,7 @@ export async function startSession(
     )
       .bind(
         email,
+        userPreferences.name,
         JSON.stringify(userPreferences.preferredCategories),
         userPreferences.budgetPreference,
         JSON.stringify(userPreferences.previousProducts),
@@ -215,6 +218,68 @@ export async function getVoiceAgentVariables(
   return empty;
 }
 
+/**
+ * Last N *paid* orders for the account behind a session — used to inject
+ * "they previously bought X, Y" into Gemini's system instruction (see
+ * useGeminiLive.ts), so a returning signed-in shopper doesn't have to
+ * re-describe what they usually buy.
+ *
+ * Deliberately reads the orders table directly rather than
+ * user_preferences.purchase_history: that column is only a deduped list of
+ * product ids (written by the Razorpay webhook), with no order date or
+ * amount, and de-duping loses "bought the same hoodie twice" as a signal.
+ * orders.items_json already carries product names, so this needs no join
+ * against products (which may have since changed price or gone out of
+ * stock — the historical name is what actually shipped, not today's list).
+ *
+ * Scoped by session_id -> sessions.user_id, exactly like name/preferences,
+ * so it reads identically for guest vs signed-in without special-casing:
+ * a guest session (user_id null) has no account to look up and gets an
+ * empty history, not an error.
+ *
+ * Only status='paid' counts — an abandoned or failed checkout was never a
+ * purchase and would be a confusing thing for Sanchay to bring up ("last
+ * time you bought a hoodie" when that checkout actually failed).
+ */
+export async function getPurchaseHistory(
+  env: Env,
+  sessionId: string,
+  limit = 2,
+): Promise<{ orderId: string; amountPaise: number; items: { name: string; quantity: number }[]; createdAt: string }[]> {
+  const sess: any = await env.DB.prepare("SELECT user_id FROM sessions WHERE id = ?").bind(sessionId).first();
+  const userId = sess?.user_id as string | null;
+  if (!userId) return [];
+
+  const rows: any[] = (
+    await env.DB.prepare(
+      `SELECT o.razorpay_order_id, o.amount, o.items_json, o.created_at
+       FROM orders o
+       JOIN sessions s ON s.id = o.session_id
+       WHERE s.user_id = ? AND o.status = 'paid'
+       ORDER BY o.created_at DESC
+       LIMIT ?`,
+    )
+      .bind(userId, limit)
+      .all()
+  ).results ?? [];
+
+  return rows.map((r) => {
+    let items: { name: string; quantity: number }[] = [];
+    try {
+      const parsed = JSON.parse(r.items_json || "[]");
+      items = Array.isArray(parsed)
+        ? parsed.map((i: any) => ({ name: String(i.name ?? "item"), quantity: Number(i.quantity) || 1 }))
+        : [];
+    } catch { /* malformed items_json — treat as no items rather than throw */ }
+    return {
+      orderId: r.razorpay_order_id as string,
+      amountPaise: r.amount as number,
+      items,
+      createdAt: r.created_at as string,
+    };
+  });
+}
+
 export async function endSession(env: Env, sessionId: string): Promise<void> {
   await env.DB.prepare("UPDATE sessions SET status = 'ended' WHERE id = ?").bind(sessionId).run();
 
@@ -283,7 +348,115 @@ export async function searchCatalog(
   return { status: 200, body };
 }
 
+/**
+ * Removes exactly the items (and quantities) of a paid order from
+ * cart_items — never the whole cart, since items added AFTER checkout
+ * started (before payment completed) legitimately belong in the cart
+ * still. Per product: if the cart quantity is <= what was paid for,
+ * delete the line entirely; otherwise decrement by the paid quantity and
+ * leave the remainder (extra added post-checkout).
+ *
+ * Shared between two call sites that both need this, for different
+ * reasons:
+ *  - the Razorpay webhook (fast path — clears the instant payment.captured
+ *    arrives, which is the common case)
+ *  - getCartPayload's self-heal below (safety net — webhook delivery is
+ *    async and can be delayed or, per Razorpay's own docs, occasionally
+ *    dropped; without this, a session that reloads before the webhook
+ *    lands would see already-paid items sitting in the cart, and every
+ *    later cart READ is a chance to notice and fix that instead of the
+ *    correctness of the UI depending on webhook timing)
+ */
+export async function clearPaidItemsFromCart(
+  env: Env,
+  sessionId: string,
+  itemsJson: string | null,
+): Promise<void> {
+  if (!itemsJson) return;
+  let items: { productId: string; quantity: number }[];
+  try {
+    items = JSON.parse(itemsJson);
+  } catch {
+    return;
+  }
+  for (const item of items) {
+    if (!item.productId || !item.quantity) continue;
+    const row: any = await env.DB.prepare(
+      "SELECT id, quantity FROM cart_items WHERE session_id = ? AND product_id = ?",
+    )
+      .bind(sessionId, item.productId)
+      .first();
+    if (!row) continue;
+    if (row.quantity <= item.quantity) {
+      await env.DB.prepare("DELETE FROM cart_items WHERE id = ?").bind(row.id).run();
+    } else {
+      await env.DB.prepare("UPDATE cart_items SET quantity = quantity - ? WHERE id = ?")
+        .bind(item.quantity, row.id)
+        .run();
+    }
+  }
+}
+
+/**
+ * Self-heal pass run on every cart read — cheap existence check first
+ * (most reads find nothing to reconcile), only doing the per-item cleanup
+ * work when this session actually has a paid order. Idempotent: once an
+ * order's items are gone from cart_items, re-running this for the same
+ * order is a no-op (clearPaidItemsFromCart finds no matching row and
+ * skips it).
+ */
+async function reconcilePaidOrders(env: Env, sessionId: string): Promise<void> {
+  const paidOrders: any[] = (
+    await env.DB.prepare("SELECT items_json FROM orders WHERE session_id = ? AND status = 'paid'")
+      .bind(sessionId)
+      .all()
+  ).results ?? [];
+  for (const row of paidOrders) {
+    await clearPaidItemsFromCart(env, sessionId, row.items_json);
+  }
+}
+
+/**
+ * Eagerly expires a stale created/attempted order on read, rather than only
+ * lazily reclaiming it the next time checkoutCart happens to run (which is
+ * what RESERVATION_TIMEOUT_MS originally only guarded). Without this, the
+ * "pending payment" banner and its countdown had no actual trigger to
+ * disappear on — the frontend would need to be trusted to hide it once its
+ * own timer hit zero, but the order (and its stock reservation) would still
+ * be alive server-side until the shopper happened to call checkout again.
+ * Since GET /api/cart is already polled every few seconds by the frontend,
+ * this makes expiry visible almost immediately after the real deadline,
+ * without needing a scheduled Worker.
+ *
+ * Applies to BOTH 'created' (never attempted) and 'attempted' (tried and
+ * failed/abandoned) orders — an attempted order sitting forever with no
+ * expiry would lock its reserved stock indefinitely, the same problem this
+ * exists to prevent for 'created' orders.
+ */
+async function reconcileExpiredOrders(env: Env, sessionId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - RESERVATION_TIMEOUT_MS).toISOString();
+  const stale: any[] = (
+    await env.DB.prepare(
+      "SELECT id, items_json, stock_released FROM orders WHERE session_id = ? AND status IN ('created','attempted') AND created_at < ?",
+    )
+      .bind(sessionId, cutoff)
+      .all()
+  ).results ?? [];
+  for (const row of stale) {
+    // stock_released=1 means a payment.failed webhook already returned
+    // this order's stock (see handlePaymentFailed in api/webhook.ts) —
+    // releasing it again here would credit phantom stock that was never
+    // re-reserved.
+    if (!row.stock_released) {
+      await releaseOrderStock(env, row.items_json);
+    }
+    await env.DB.prepare("UPDATE orders SET status = 'cancelled', stock_released = 1 WHERE id = ?").bind(row.id).run();
+  }
+}
+
 async function getCartPayload(env: Env, sessionId: string) {
+  await reconcilePaidOrders(env, sessionId);
+  await reconcileExpiredOrders(env, sessionId);
   const rows: any[] = (
     await env.DB.prepare(
       "SELECT product_id, product_name, price, quantity FROM cart_items WHERE session_id = ? ORDER BY added_at ASC",
@@ -411,25 +584,61 @@ async function getBudget(env: Env, sessionId: string): Promise<number | null> {
 }
 
 /**
- * Sets or updates the session's budget mid-conversation. Exists because the
- * voice persona is expected to acknowledge and enforce a budget the
- * shopper states verbally (e.g. "keep me under 2000 rupees") — without
- * this tool, budget_paise could only ever be set once at session start,
- * so a spoken budget had no real backend effect even though the persona
- * described handling it.
+ * Sets, updates, or clears the session's budget mid-conversation. Exists
+ * because the voice persona is expected to acknowledge and enforce a
+ * budget the shopper states verbally (e.g. "keep me under 2000 rupees") —
+ * without this tool, budget_paise could only ever be set once at session
+ * start, so a spoken budget had no real backend effect even though the
+ * persona described handling it.
+ *
+ * Deliberately session-scoped, never account-scoped: budget_paise lives
+ * on `sessions`, not `user_preferences` (the latter has an unused
+ * budget_preference column nothing writes to). A budget set today has no
+ * bearing on tomorrow's session, signed in or not — every session starts
+ * uncapped unless the shopper states one again. This is what makes "the
+ * cap is temporary" true, not a policy this function has to enforce.
  *
  * Rejects a budget lower than what's already committed in the cart rather
  * than silently accepting a number that would make the existing cart
  * invalid — the shopper is told to remove items first instead.
+ *
+ * clearBudget=true removes the cap entirely (e.g. "remove my budget",
+ * "no limit") — the one budget change that legitimately isn't "set to a
+ * number", so it's a separate explicit path rather than overloading 0 or
+ * a negative number to mean "no cap" (both are validation failures, and
+ * should stay that way — a spoken "zero" is far more likely to be a
+ * misheard number than an intentional "uncap me").
  */
 export async function setBudget(
   env: Env,
   sessionId: string,
   budgetInput: unknown,
+  clearBudget = false,
 ): Promise<LogicResult> {
+  if (clearBudget) {
+    await env.DB.prepare("UPDATE sessions SET budget_paise = NULL WHERE id = ?").bind(sessionId).run();
+    const cart = await getCartPayload(env, sessionId);
+    const body = {
+      success: true as const,
+      data: { budget: null, budget_display: null, budgetRemaining: null },
+    };
+    await logCall(env, sessionId, "/api/session/budget", { clear: true }, body);
+    void cart; // no remaining-budget math needed once uncapped
+    return { status: 200, body };
+  }
+
   const budget = Number(budgetInput);
   if (!Number.isFinite(budget) || budget <= 0) {
     const body = { success: false, error: "budget must be a positive number" };
+    await logCall(env, sessionId, "/api/session/budget", { budget: budgetInput }, body);
+    return { status: 400, body };
+  }
+  // Guards against a budget so large it can't round-trip through
+  // budget_paise (an INTEGER column) without overflow/precision loss —
+  // ₹10 crore is already far beyond anything this catalog could ever
+  // total, so this is a sanity ceiling, not a real business limit.
+  if (budget > 10_000_000) {
+    const body = { success: false, error: "budget must be ₹1,00,00,000 or less" };
     await logCall(env, sessionId, "/api/session/budget", { budget: budgetInput }, body);
     return { status: 400, body };
   }
@@ -459,16 +668,59 @@ export async function setBudget(
   return { status: 200, body };
 }
 
+/**
+ * The session's most recent unpaid-but-still-active order (created or
+ * attempted), if any — lets the frontend show "resume payment" immediately
+ * on page load, before the shopper clicks Pay again. Without this, a
+ * reload wipes the frontend's local payment-state (plain React state, not
+ * persisted), so a shopper who started paying, closed the tab, and came
+ * back would see a plain cart with no indication they already have an
+ * order in flight — clicking Pay again is actually safe (checkoutCart's
+ * idempotency reuses the same order), but nothing tells them that.
+ */
+async function getPendingOrder(
+  env: Env,
+  sessionId: string,
+): Promise<{ orderId: string; amountPaise: number; paymentUrl: string | null; expiresInSeconds: number; lastAttemptFailed: boolean } | null> {
+  const row: any = await env.DB.prepare(
+    "SELECT razorpay_order_id, amount, payment_url, status, created_at FROM orders WHERE session_id = ? AND status IN ('created','attempted') ORDER BY created_at DESC LIMIT 1",
+  )
+    .bind(sessionId)
+    .first();
+  if (!row) return null;
+  // Server-computed, not left for the frontend to guess from its own
+  // clock — the countdown shown to the shopper (and reported to Gemini's
+  // check_payment_status tool) must agree with when reconcileExpiredOrders
+  // will actually act, or the UI could show time remaining on an order
+  // that's already been expired-and-released.
+  const ageMs = Date.now() - new Date(row.created_at).getTime();
+  const expiresInSeconds = Math.max(0, Math.round((RESERVATION_TIMEOUT_MS - ageMs) / 1000));
+  return {
+    orderId: row.razorpay_order_id,
+    amountPaise: row.amount,
+    paymentUrl: row.payment_url ?? null,
+    expiresInSeconds,
+    // 'attempted' status means a prior payment.failed webhook already
+    // marked it — see handleRazorpayWebhook. Surfaced so the frontend can
+    // show "your last attempt failed, try again" instead of the generic
+    // "waiting for payment" banner for an order that hasn't actually been
+    // tried yet.
+    lastAttemptFailed: row.status === "attempted",
+  };
+}
+
 export async function getCart(env: Env, sessionId: string): Promise<LogicResult> {
   const cart = await getCartPayload(env, sessionId);
   const budget = await getBudget(env, sessionId);
   const youMightAlsoLike = await getCrossSellSuggestions(env, sessionId);
+  const pendingOrder = await getPendingOrder(env, sessionId);
   const body = {
     success: true as const,
     data: {
       ...cart,
       budgetRemaining: budget == null ? null : Math.max(0, budget - cart.total),
       youMightAlsoLike,
+      pendingOrder,
     },
   };
   await logCall(env, sessionId, "/api/cart", null, body);
@@ -1286,8 +1538,12 @@ function getMerchantMaxOrderPaise(env: Env): number {
 // actually blocks anything.
 const RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
 
-/** Restores stock for every item in a cancelled/abandoned order — the exact inverse of the reservation decrement below. */
-async function releaseOrderStock(env: Env, itemsJson: string | null): Promise<void> {
+/** Restores stock for every item in a cancelled/abandoned/failed order —
+ *  the exact inverse of the reservation decrement below. Exported so the
+ *  webhook's payment.failed handler can release stock the instant an
+ *  attempt definitively fails, rather than waiting for the next
+ *  reconcileExpiredOrders pass. */
+export async function releaseOrderStock(env: Env, itemsJson: string | null): Promise<void> {
   if (!itemsJson) return;
   let items: { productId: string; quantity: number }[];
   try {
@@ -1304,33 +1560,33 @@ async function releaseOrderStock(env: Env, itemsJson: string | null): Promise<vo
 }
 
 export async function checkoutCart(env: Env, sessionId: string): Promise<LogicResult> {
-  // Idempotency — active order for this session is returned as-is, UNLESS
-  // it's a "created" order old enough to be abandoned, in which case its
-  // reserved stock is released and checkout proceeds to create a new order.
+  // Reconcile first — an active order older than RESERVATION_TIMEOUT_MS
+  // (created OR attempted; see reconcileExpiredOrders) is released and
+  // marked cancelled before the idempotency check below even runs, so a
+  // checkout call after expiry always creates a genuinely fresh order
+  // rather than checking an ageMs condition inline here that used to only
+  // apply to 'created' orders (an 'attempted' order could sit forever).
+  await reconcileExpiredOrders(env, sessionId);
+
+  // Idempotency — a still-active (non-expired) order for this session is
+  // returned as-is rather than creating a duplicate.
   const activeOrder: any = await env.DB.prepare(
     "SELECT id, razorpay_order_id, amount, payment_url, status, items_json, created_at FROM orders WHERE session_id = ? AND status IN ('created', 'attempted') ORDER BY created_at DESC LIMIT 1",
   )
     .bind(sessionId)
     .first();
   if (activeOrder) {
-    const ageMs = Date.now() - new Date(activeOrder.created_at).getTime();
-    if (activeOrder.status !== "created" || ageMs < RESERVATION_TIMEOUT_MS) {
-      const body = {
-        success: true as const,
-        data: {
-          orderId: activeOrder.razorpay_order_id,
-          amount: activeOrder.amount,
-          paymentUrl: activeOrder.payment_url ?? undefined,
-          status: activeOrder.status,
-        },
-      };
-      await logCall(env, sessionId, "/api/checkout", { idempotent: true }, body);
-      return { status: 200, body };
-    }
-    // Abandoned reservation — release stock and mark cancelled, then fall
-    // through to create a fresh order below.
-    await releaseOrderStock(env, activeOrder.items_json);
-    await env.DB.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").bind(activeOrder.id).run();
+    const body = {
+      success: true as const,
+      data: {
+        orderId: activeOrder.razorpay_order_id,
+        amount: activeOrder.amount,
+        paymentUrl: activeOrder.payment_url ?? undefined,
+        status: activeOrder.status,
+      },
+    };
+    await logCall(env, sessionId, "/api/checkout", { idempotent: true }, body);
+    return { status: 200, body };
   }
 
   const rows: any[] = (
