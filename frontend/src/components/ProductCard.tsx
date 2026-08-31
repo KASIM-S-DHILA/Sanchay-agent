@@ -14,7 +14,7 @@ export interface CatalogProduct {
 
 const PLACEHOLDER_IMAGE = "/products/placeholder.svg";
 
-// Untrusted product data (future Flipkart import, agent-supplied URLs) may
+// Untrusted product data (bulk CSV imports, agent-supplied URLs) may
 // contain http://, javascript:, data:, or malformed URLs. Only local assets
 // and https URLs are allowed through; everything else falls back to the
 // placeholder so a bad image_url can never break layout or execute script.
