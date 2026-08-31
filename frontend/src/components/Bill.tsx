@@ -43,6 +43,7 @@ export function Bill({
   pendingOrder,
   busy,
   email,
+  isSignedIn,
   onEmailChange,
   onSetBudget,
   onClearBudget,
@@ -58,6 +59,10 @@ export function Bill({
   pendingOrder: PendingOrderInfo | null;
   busy: boolean;
   email: string;
+  // Undefined (cart not loaded yet) is treated as "unknown, don't block" —
+  // only an explicit false disables Pay. This avoids a flash of "sign in to
+  // pay" on the very first render before /api/cart has ever returned.
+  isSignedIn?: boolean;
   onEmailChange: (value: string) => void;
   onSetBudget: (rupeeValue: number) => Promise<boolean>;
   onClearBudget: () => Promise<boolean>;
@@ -267,14 +272,25 @@ export function Bill({
               )}
               <li className="pay-check">Stock and the merchant's order limit are re-checked now</li>
             </ul>
-            <button
-              type="button"
-              className="btn pay-btn"
-              onClick={onPay}
-              disabled={busy}
-            >
-              {busy ? "Opening payment" : `Pay ${rupees(total)}`}
-            </button>
+            {isSignedIn === false ? (
+              <>
+                <p className="pay-signin-note">
+                  Sign in to complete your purchase — your cart is saved and won't be lost.
+                </p>
+                <button type="button" className="btn pay-btn" disabled title="Sign in to pay">
+                  Sign in to pay
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="btn pay-btn"
+                onClick={onPay}
+                disabled={busy}
+              >
+                {busy ? "Opening payment" : `Pay ${rupees(total)}`}
+              </button>
+            )}
           </div>
         )
       )}

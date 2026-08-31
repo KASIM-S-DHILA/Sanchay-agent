@@ -452,6 +452,23 @@ input {
   box-shadow: 0 0 0 3px var(--live-wash);
 }
 
+.talk-btn.is-paused {
+  color: var(--muted);
+  border-color: var(--rule-strong);
+}
+
+.talk-btn.is-paused .talk-dot {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+.dock-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 /* — Level meter. Bars are driven by --level, the real RMS amplitude of the
      audio actually flowing, not by a keyframe loop. Silence reads as
      silence, which is the point. — */
@@ -534,7 +551,8 @@ input {
 }
 
 .dock-end {
-  margin-left: auto;
+  /* margin-left: auto now lives on the parent .dock-actions, which also
+     holds the Pause/Resume button next to this one. */
 }
 
 /* Opening state: teaches the three things worth saying first. */
@@ -1133,6 +1151,12 @@ input {
   color: #B3261E;
 }
 
+.pay-signin-note {
+  font-size: 0.75rem;
+  color: #7A3906;
+  margin: 0 0 0.4rem;
+}
+
 /* — PAID. The single flourish on the page, and it only lands when Razorpay
      has actually confirmed the money moved. — */
 .bill-paid {
@@ -1492,6 +1516,157 @@ input {
   display: none;
 }
 
+/* — Floating product-detail windows. Layer on top of the shelf, never
+     replace it — the agent opening a closer look shouldn't hide what was
+     already on screen. Desktop shows the cascade; mobile shows one card
+     with arrows; exactly one of the two is display:block at a time, both
+     reading from the same windows array. — */
+.product-windows-desktop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+
+.product-windows-mobile {
+  display: none;
+}
+
+.product-window {
+  position: absolute;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r3);
+  box-shadow: 0 12px 32px rgba(20, 24, 29, 0.16);
+  pointer-events: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.product-window-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px 7px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
+}
+
+.product-window-cat {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.product-window-close {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--r1);
+}
+
+.product-window-close:hover {
+  color: var(--ink);
+  background: var(--counter-deep);
+}
+
+.product-window-media {
+  position: relative;
+  aspect-ratio: 5 / 4;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.product-window-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.product-window-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.product-window-name {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+
+.product-window-desc {
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.product-window-vision {
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  line-height: 1.4;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border-radius: var(--r1);
+  border-left: 2px solid var(--rule-strong);
+}
+
+.product-window-vision-label {
+  display: block;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.product-window-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.product-window-price {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.product-windows-actions {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.product-windows-pause {
+  --btn-bg: var(--surface);
+  --btn-fg: var(--live-deep);
+  --btn-bd: var(--live);
+}
+
+.product-windows-pause.is-paused {
+  --btn-fg: var(--muted);
+  --btn-bd: var(--rule-strong);
+}
+
 @media (max-width: 900px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
@@ -1565,6 +1740,52 @@ input {
     left: 12px;
     bottom: 12px;
     max-width: none;
+  }
+
+  .product-windows-desktop {
+    display: none;
+  }
+
+  .product-windows-mobile {
+    display: block;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 40;
+  }
+
+  .product-window.is-mobile {
+    position: static;
+    width: 100%;
+  }
+
+  .product-windows-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .product-windows-nav-count {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .product-windows-mobile .product-windows-actions {
+    position: static;
+    flex-direction: column;
+    margin-top: 8px;
+  }
+
+  .product-windows-mobile .product-windows-close-all {
+    width: 100%;
+  }
+
+  .product-windows-mobile .product-windows-pause {
+    width: 100%;
   }
 }
 
