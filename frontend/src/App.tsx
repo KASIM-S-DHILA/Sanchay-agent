@@ -589,13 +589,33 @@ export default function App() {
       const body: any = e.response ?? {};
       const data = body.data ?? body;
 
-      // Checkout the agent started on our behalf — open the payment window.
+      // Checkout the agent started on our behalf, discovered via the audit
+      // poll rather than this tab's own direct /api/checkout response.
+      //
+      // Deliberately primes the "Resume payment" banner here instead of
+      // calling openRazorpay directly — this event arrived through a
+      // background poll, so by definition there is NO user gesture on the
+      // call stack, ever, no matter how this branch is reached. Calling
+      // openRazorpay (a real rzp.open()) from here used to race the
+      // voice tool-call path's own primeVoiceCheckout (useGeminiLive.ts →
+      // onCheckoutSuccess): both react to the same checkout, over two
+      // independent async round-trips (this tab's direct /api/checkout
+      // response vs. the next /api/audit poll tick), and whichever one's
+      // response happened to land back in the browser first "won" —
+      // sometimes the audit poll won, called openRazorpay with no real
+      // click behind it, and the browser silently killed that gesture-less
+      // modal almost immediately, firing Razorpay's own ondismiss and
+      // showing "you closed the payment window" even though the shopper
+      // never touched anything. Priming here (same as primeVoiceCheckout)
+      // means BOTH paths converge on the exact same gesture-safe outcome —
+      // whichever fires first, the result is identical, so there's nothing
+      // left to race.
       if (e.endpoint === "/api/checkout" && e.status === "ok" && data?.orderId && data?.amount) {
-        setPayment((prev) => {
-          if (prev && prev.orderId === data.orderId) return prev; // already handling this one
-          openRazorpay(data.orderId, data.amount);
-          return { orderId: data.orderId, amount: data.amount, stage: "pending" };
-        });
+        setPayment((prev) =>
+          prev && prev.orderId === data.orderId && prev.stage === "paid"
+            ? prev // already paid — never regress to "pending" for a stale event
+            : { orderId: data.orderId, amount: data.amount, stage: "dismissed" },
+        );
         continue;
       }
 
@@ -612,7 +632,7 @@ export default function App() {
         setShelfError(null);
       }
     }
-  }, [events, openRazorpay, sessionId, auditFeedLoaded]);
+  }, [events, sessionId, auditFeedLoaded]);
 
   const items = cart?.items ?? [];
   const total = cart?.total ?? 0;

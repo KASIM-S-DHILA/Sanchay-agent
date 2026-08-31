@@ -251,7 +251,18 @@ export function Bill({
                   : `Held for ${countdownLabel} more`}
               </span>
             )}
-            <button type="button" className="btn btn-sm" onClick={onResumePayment}>
+            <button
+              type="button"
+              // Draws the eye the instant this appears — this is the one
+              // moment a voice-triggered checkout needs a real tap to
+              // continue (Razorpay's modal can't open itself from a
+              // WebSocket tool-call response; see primeVoiceCheckout in
+              // App.tsx). Without a visual cue, a shopper who was just
+              // listening rather than looking at the screen can miss that
+              // anything changed at all.
+              className={`btn btn-sm ${payment!.stage === "dismissed" && !pendingOrder?.lastAttemptFailed ? "pay-resume-cue" : ""}`}
+              onClick={onResumePayment}
+            >
               {pendingOrder?.lastAttemptFailed
                 ? "Retry payment"
                 : payment!.stage === "dismissed"
