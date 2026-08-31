@@ -1,7 +1,13 @@
 /**
  * Translates raw api_call_log audit events into shopper-friendly activity
- * lines. Anyone who wants proof can flip ActivityLog to the raw call log;
- * this is the reading for everyone else.
+ * lines. This is the ONLY reading of the audit feed that reaches the screen —
+ * ActivityLog's old "Raw log" toggle (method, endpoint, timings, full
+ * params/response JSON) was removed because it put internal API shapes in
+ * front of anyone looking at the page.
+ *
+ * That makes this file the boundary: an endpoint with no case below prints
+ * nothing rather than falling back to its own route name (see the fallback
+ * at the bottom). Adding an endpoint means writing a sentence for it.
  *
  * Kept deliberately dumb — no state, pure function of one event — so it's
  * easy to verify against real audit rows and easy to extend per endpoint.
@@ -202,18 +208,68 @@ export function toTimelineEntry(e: AuditEvent): TimelineEntry | null {
       return null; // ignored/ non-payment webhook events aren't shopper-relevant
     }
 
+    case "/api/viewed-products":
+      // Bookkeeping, not an action: this fires when a detail window has been
+      // open long enough to count as "seen" (see logViewedProduct), purely so
+      // the agent can refer back to it later. The shopper already knows they
+      // looked at it — the window was on their screen.
+      return null;
+
+    case "/api/voice/transcript":
+      // Internal: reads back the stored conversation. Never a shopper action.
+      return null;
+
+    case "/api/product-details": {
+      if (failed) {
+        return { id: e.id, ts: e.ts, tone: "warn", text: `Couldn't open those details — ${errorText}` };
+      }
+      const names = Array.isArray(data.products)
+        ? data.products.map((p: any) => p?.name).filter((n: unknown): n is string => typeof n === "string")
+        : [];
+      if (names.length === 0) return null;
+      return {
+        id: e.id,
+        ts: e.ts,
+        tone: "info",
+        text: `Opened details — ${names.join(", ")}`,
+      };
+    }
+
+    case "/api/describe-products": {
+      if (failed) {
+        return { id: e.id, ts: e.ts, tone: "warn", text: `Couldn't look at those photos — ${errorText}` };
+      }
+      const count = Array.isArray(params.product_ids) ? params.product_ids.length : 0;
+      return {
+        id: e.id,
+        ts: e.ts,
+        tone: "info",
+        text: count > 1 ? `Looked at the photos of ${count} items` : "Looked at the photo",
+      };
+    }
+
+    case "/api/account/profile": {
+      if (failed) {
+        return { id: e.id, ts: e.ts, tone: "warn", text: `Couldn't read your account — ${errorText}` };
+      }
+      return { id: e.id, ts: e.ts, tone: "info", text: "Checked your account" };
+    }
+
     default:
       break;
   }
 
-  // Fallback — never silently drop an event the mapping doesn't know about;
-  // show it plainly rather than pretending nothing happened.
-  return {
-    id: e.id,
-    ts: e.ts,
-    tone: failed ? "error" : "info",
-    text: `${e.method} ${e.endpoint}${failed ? ` — ${errorText}` : ""}`,
-  };
+  // Fallback for an endpoint this mapping doesn't know about yet.
+  //
+  // Deliberately says nothing about WHICH endpoint. This used to render
+  // `${e.method} ${e.endpoint}`, which meant every unmapped call showed up
+  // on screen as raw internal API text ("POST /api/viewed-products") in the
+  // plain, shopper-facing view — visible to anyone looking at the page, in a
+  // screen share, or in a recording. A successful call nobody has written a
+  // sentence for isn't worth a line at all; a failure is worth admitting,
+  // but the shopper-readable error is the useful part, not the route.
+  if (!failed) return null;
+  return { id: e.id, ts: e.ts, tone: "error", text: errorText };
 }
 
 export function toTimeline(events: AuditEvent[]): TimelineEntry[] {
