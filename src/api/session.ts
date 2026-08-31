@@ -1,10 +1,19 @@
 import type { Env } from "../types";
 import { logApiCall } from "../middleware/audit";
 import { validateSession, logAuthFailure } from "../middleware/session";
-import { checkRateLimit, rateLimitedResponse } from "../middleware/rateLimit";
+import { checkRateLimit, clientIp, rateLimitedResponse } from "../middleware/rateLimit";
 import { startSession, endSession, setBudget, getPurchaseHistory } from "./logic";
 
 export async function handleSessionStart(request: Request, env: Env): Promise<Response> {
+  // No session/auth exists yet at this point (this endpoint CREATES the
+  // session), so the only caller identity available is IP. Guards against
+  // a scripted loop flooding the sessions table / D1 write quota — set
+  // deliberately high since a real page load only calls this once, but a
+  // shared office/NAT IP with several genuine shoppers loading the page
+  // around the same time must never be mistaken for abuse.
+  const ipLimit = await checkRateLimit(env, `session_start:ip:${clientIp(request)}`, 60, 60);
+  if (!ipLimit.allowed) return rateLimitedResponse();
+
   let body: { user_email?: string; budget?: number } = {};
   try {
     body = await request.json();

@@ -63,6 +63,18 @@ export async function maybeCleanupExpiredRows(env: Env): Promise<void> {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM rate_limits WHERE window_start < ?").bind(cutoff),
       env.DB.prepare("DELETE FROM otps WHERE created_at < ?").bind(cutoff),
+      // api_call_log had NO cleanup at all and no read of it was ever
+      // capped either — the frontend polls GET /api/audit every 3 seconds
+      // for as long as a session/tab stays open, so a single long-lived
+      // session accumulated ~4,000 rows in one real session, at which
+      // point every poll (parsing every row's params_json/response_json
+      // twice, in JS) started exceeding the Worker's CPU time limit
+      // outright — not just breaking the audit feed, but taking other
+      // requests down with it under the same overloaded isolate. GET
+      // /api/audit is now separately capped to the most recent 200 rows
+      // (see handleAudit) as the immediate fix; this prevents the table
+      // from growing unbounded in the first place.
+      env.DB.prepare("DELETE FROM api_call_log WHERE created_at < ?").bind(cutoff),
     ]);
   } catch (e) {
     console.error("maybeCleanupExpiredRows failed:", e);
