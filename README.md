@@ -114,3 +114,7 @@ npm run deploy
 - **Payments:** Razorpay (test mode)
 - **Auth:** Email OTP + JWT, Cloudflare Turnstile (optional)
 - **Testing:** Vitest + `@cloudflare/vitest-pool-workers` (tests run against a real Worker + real D1, not mocks)
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
