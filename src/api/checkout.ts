@@ -1,8 +1,9 @@
 import type { Env } from "../types";
 import { validateSession, logAuthFailure } from "../middleware/session";
-import { validateSessionWithAuth } from "../middleware/auth";
+import { validateSessionWithAuth, getAuthUser } from "../middleware/auth";
 import { checkRateLimit, clientIp, rateLimitedResponse } from "../middleware/rateLimit";
 import { isUnsubstitutedPlaceholder, placeholderError } from "../middleware/placeholders";
+import { logApiCall } from "../middleware/audit";
 import { checkoutCart, getOrderStatus } from "./logic";
 
 export async function handleCheckout(request: Request, env: Env): Promise<Response> {
@@ -18,6 +19,41 @@ export async function handleCheckout(request: Request, env: Env): Promise<Respon
   if (!authCheck.ok) {
     await logAuthFailure(env, request, "/api/checkout");
     return Response.json({ success: false, error: "Invalid or expired session" }, { status: 401 });
+  }
+
+  // Payment requires a REAL, OTP-verified sign-in — a valid bearer token,
+  // not merely session.userId being non-null. session.userId can also be
+  // set by the older, unauthenticated startSession({ user_email }) path
+  // (see startSession in logic.ts — it writes sessions.user_id directly
+  // from whatever email string the caller passes, with no OTP check at
+  // all, purely so a guest can optionally tag a session for order-history
+  // lookups). Gating on session.userId alone would let anyone bypass
+  // sign-in just by starting a session with any email string. A verified
+  // JWT (see handleAuthOtpVerify) is the only proof that this caller
+  // actually completed OTP sign-in, so that's what's checked here.
+  //
+  // Browsing, searching, and building a cart all work fine as a guest;
+  // this is the one gate that specifically requires having signed in, so
+  // the cart survives the sign-in prompt rather than being lost — see the
+  // "isSignedIn" flag on GET /api/cart, which lets both the browser and
+  // the voice agent know this BEFORE calling checkout and hitting this
+  // rejection as a surprise. Logged directly (not via logAuthFailure,
+  // which is specifically for invalid/expired sessions and always writes
+  // sessionId: null) since this session IS valid — it's a real,
+  // attributable "blocked" call, not an auth failure.
+  const authedUserId = await getAuthUser(request, env);
+  if (!authedUserId) {
+    const message = "Sign in to complete your purchase — your cart is saved and won't be lost.";
+    await logApiCall(env, {
+      sessionId: session.id,
+      endpoint: "/api/checkout",
+      method: request.method,
+      params: null,
+      response: { success: false, error: message },
+      status: "blocked",
+      durationMs: 0,
+    }).catch((e) => console.error("api_call_log write failed:", e));
+    return Response.json({ success: false, error: message }, { status: 403 });
   }
 
   // Two limits: tight per-session (retries, a runaway agent loop) and
