@@ -86,6 +86,11 @@ export default function App() {
   const [addingProductId, setAddingProductId] = useState<string | null>(null);
   const [justAddedId, setJustAddedId] = useState<string | null>(null);
   const [payment, setPayment] = useState<PaymentState | null>(null);
+  /** Mirrors `payment` for callbacks that must stay identity-stable across
+   *  renders — see openVoiceCheckout, which the voice tool dispatcher holds
+   *  for the whole call. */
+  const paymentRef = useRef<PaymentState | null>(null);
+  paymentRef.current = payment;
   const [checkoutBusy, setCheckoutBusy] = useState(false);
 
   const sessionIdRef = useRef<string | null>(null);
@@ -264,7 +269,12 @@ export default function App() {
       setPayment((prev) => {
         if (prev?.stage === "paid") return prev;
         if (prev?.orderId === pending.orderId) return prev;
-        return { orderId: pending.orderId, amount: pending.amountPaise, stage: "dismissed" };
+        // A reload can't tell whether Razorpay was ever actually opened
+        // before the page went away, so this can't honestly claim
+        // "dismissed" (which specifically means a real modal was closed) —
+        // awaiting_tap makes no claim about what happened before reload,
+        // just that a tap is needed to continue.
+        return { orderId: pending.orderId, amount: pending.amountPaise, stage: "awaiting_tap" };
       });
       restoredPendingOrderRef.current = pending.orderId;
       return;
@@ -306,12 +316,25 @@ export default function App() {
     [api, note, refreshCart],
   );
 
+  /** The order id whose Razorpay instance is live on screen right now.
+   *  Constructing a SECOND window.Razorpay for an order that already has
+   *  one open tears the first one down, and the teardown fires that first
+   *  instance's own `ondismiss` — which is exactly how "you closed the
+   *  payment window" appeared for a shopper who never touched anything.
+   *  Two independent paths could both reach openRazorpay for the same
+   *  checkout (the voice tool-call response and the /api/audit poll that
+   *  later reports the same checkout), so the guard lives here rather than
+   *  in either caller. Cleared on dismiss/paid so a genuine reopen works. */
+  const openOrderRef = useRef<string | null>(null);
+
   const openRazorpay = useCallback(
     (orderId: string, amountPaise: number) => {
       if (!window.Razorpay) {
         note("The payment window couldn't load. Check your connection and try again.", "error");
         return;
       }
+      if (openOrderRef.current === orderId) return; // already on screen — never double-construct
+      openOrderRef.current = orderId;
       setPayment({ orderId, amount: amountPaise, stage: "pending" });
       const rzp = new window.Razorpay({
         key: RAZORPAY_KEY_ID,
@@ -321,12 +344,14 @@ export default function App() {
         name: "Sanchay",
         description: "Voice counter bill",
         handler: () => {
+          openOrderRef.current = null; // window is gone; a retry may legitimately reopen
           void confirmPayment(orderId);
         },
         modal: {
           // Closing the window is a normal thing to do, not an error. Say what
           // it means and leave a way back in.
           ondismiss: () => {
+            openOrderRef.current = null; // genuinely closed — allow a real reopen
             setPayment((prev) =>
               prev && prev.orderId === orderId && prev.stage !== "paid"
                 ? { ...prev, stage: "dismissed" }
@@ -346,28 +371,43 @@ export default function App() {
   }, [payment, openRazorpay]);
 
   /**
-   * Voice-triggered checkout completion — deliberately does NOT call
-   * openRazorpay directly. Razorpay's checkout modal can be silently
-   * blocked by the browser when opened from code that isn't running
-   * inside a real user gesture (a click/tap), and a Gemini Live tool-call
-   * callback fires from a WebSocket message handler — there is no click
-   * behind it, no matter how "immediate" it feels in the conversation.
-   * That's exactly the bug this fixes: checkout "worked" (a real order
-   * was created — this callback fired), but rzp.open() never visibly
-   * appeared, and only opened once the shopper did something with a real
-   * gesture afterward (clicking Pay/Resume manually).
+   * Voice-triggered checkout completion — opens the payment window itself,
+   * which is the whole point of asking out loud: "check me out" should
+   * finish with a payment window on screen, not with homework.
    *
-   * Instead, this primes the SAME "Resume payment" UI a dismissed-modal
-   * checkout already shows (see Bill.tsx's `awaiting` branch) — one real
-   * tap on that button is real gesture and opens cleanly. The agent is
-   * told out loud to say so (see the tool description), so the shopper
-   * isn't left wondering why nothing happened.
+   * This deliberately DOES call openRazorpay from a Gemini Live tool-call
+   * response (a WebSocket message handler, no click on the call stack).
+   * That's fine: Razorpay Standard Checkout injects an iframe overlay into
+   * this page, and injecting DOM is not gesture-gated by browsers — only
+   * real popups (window.open), fullscreen, audio playback and clipboard
+   * are. An earlier version primed a "tap to pay" button here instead,
+   * on the theory that a missing gesture was blocking the modal. The real
+   * cause was a double-construct: the /api/audit poll reported the same
+   * checkout a beat later and called openRazorpay AGAIN for that order,
+   * and building a second Razorpay instance tore the first one down —
+   * firing the first instance's ondismiss, which surfaced as "you closed
+   * the payment window" to a shopper who had touched nothing. openRazorpay
+   * now guards that (openOrderRef), so this can open directly and the
+   * audit path can no longer fight it.
+   *
+   * Fallback if a browser ever does refuse: openRazorpay leaves the bill
+   * in `pending`, whose banner offers "Reopen payment window" — a real tap
+   * that always works. Nothing is lost, and the order already exists
+   * server-side either way.
    */
-  const primeVoiceCheckout = useCallback((orderId: string, amountPaise: number) => {
-    setPayment((prev) =>
-      prev && prev.orderId === orderId && prev.stage === "paid" ? prev : { orderId, amount: amountPaise, stage: "dismissed" },
-    );
-  }, []);
+  const openVoiceCheckout = useCallback(
+    (orderId: string, amountPaise: number) => {
+      // Reads payment through a ref, not the `payment` value, so this
+      // callback's identity never changes — useGeminiLive captures it in
+      // its tool-dispatch closure for the life of a call, and a callback
+      // that gets recreated on every payment state change risks that
+      // closure holding a stale copy mid-conversation.
+      const current = paymentRef.current;
+      if (current?.orderId === orderId && current.stage === "paid") return;
+      openRazorpay(orderId, amountPaise);
+    },
+    [openRazorpay],
+  );
 
   // — Auth ————————————————————————————————————————————————————————————
   // A session is opened first if none exists yet, so signing in before ever
@@ -423,7 +463,7 @@ export default function App() {
   // session id as a plain argument to startCall and never creates, caches,
   // or hands one back. No "adopt session" reconciliation needed: there is
   // only ever one copy of the session id to begin with.
-  const voice = useGeminiLive(primeVoiceCheckout, productWindows);
+  const voice = useGeminiLive(openVoiceCheckout, productWindows);
 
   // Whether it's worth polling at all right now: only while a call is
   // actually live (idle means nothing but the shopper's own manual
@@ -589,32 +629,30 @@ export default function App() {
       const body: any = e.response ?? {};
       const data = body.data ?? body;
 
-      // Checkout the agent started on our behalf, discovered via the audit
-      // poll rather than this tab's own direct /api/checkout response.
+      // Checkout discovered via the audit poll. In this tab that's usually
+      // a checkout THIS tab already opened a window for (openVoiceCheckout
+      // fired the moment the tool call returned, a beat before this poll
+      // reports the same thing) — so this deliberately only records the
+      // pending state and never opens a window itself.
       //
-      // Deliberately primes the "Resume payment" banner here instead of
-      // calling openRazorpay directly — this event arrived through a
-      // background poll, so by definition there is NO user gesture on the
-      // call stack, ever, no matter how this branch is reached. Calling
-      // openRazorpay (a real rzp.open()) from here used to race the
-      // voice tool-call path's own primeVoiceCheckout (useGeminiLive.ts →
-      // onCheckoutSuccess): both react to the same checkout, over two
-      // independent async round-trips (this tab's direct /api/checkout
-      // response vs. the next /api/audit poll tick), and whichever one's
-      // response happened to land back in the browser first "won" —
-      // sometimes the audit poll won, called openRazorpay with no real
-      // click behind it, and the browser silently killed that gesture-less
-      // modal almost immediately, firing Razorpay's own ondismiss and
-      // showing "you closed the payment window" even though the shopper
-      // never touched anything. Priming here (same as primeVoiceCheckout)
-      // means BOTH paths converge on the exact same gesture-safe outcome —
-      // whichever fires first, the result is identical, so there's nothing
-      // left to race.
+      // That matters: this used to call openRazorpay directly, and for a
+      // voice checkout both paths reached it for the same order. Building a
+      // second window.Razorpay for an order that already has one open tears
+      // the first down, and the teardown fires the FIRST instance's
+      // ondismiss — surfacing as "you closed the payment window" to a
+      // shopper who had touched nothing. openRazorpay now guards against
+      // double-construction anyway (openOrderRef), but there's still no
+      // reason for a background poll to be in the business of opening
+      // payment windows, so it doesn't.
+      //
+      // Recording the state is still worth doing: it covers the case where
+      // the checkout genuinely didn't come from this tab (another tab, or a
+      // reload mid-flight), leaving a bill that offers a real tap to open.
       if (e.endpoint === "/api/checkout" && e.status === "ok" && data?.orderId && data?.amount) {
         setPayment((prev) =>
           prev && prev.orderId === data.orderId && prev.stage === "paid"
             ? prev // already paid — never regress to "pending" for a stale event
-            : { orderId: data.orderId, amount: data.amount, stage: "dismissed" },
+            : { orderId: data.orderId, amount: data.amount, stage: "awaiting_tap" },
         );
         continue;
       }

@@ -30,7 +30,7 @@ const sanchayTools = [
       {
         name: "checkout",
         description:
-          "Creates the Razorpay order for the current cart. IMPORTANT: this does NOT open the payment window itself — browsers block a payment popup triggered by voice/code with no real click behind it, so after this succeeds you must tell the shopper the order is ready and ask them to tap the 'Resume payment' button that appears on screen to open it. Never claim the payment window has opened, is open, or is loading — it is not, and won't be until they tap that button themselves.",
+          "Creates the Razorpay order for the current cart AND opens the payment window on screen. On success, say the payment window is open and state the amount — then stop talking and let them pay; do not narrate the form or read out card fields. If the shopper says they can't see it, tell them the bill also has a button to open it again. Never claim the payment itself succeeded from this call alone — this only opens the window; use check_payment_status to find out whether money actually moved.",
         parameters: { type: "object", properties: {}, required: [] },
       },
       { name: "get_order_status", description: "Look up ONE specific order by its exact order_id — only useful if the shopper already has that id in hand (e.g. from an email or receipt), which is rare; never ask them to recall or read out an order id themselves. For 'did I pay', 'what have I bought', 'show my order history', or anything about past orders in general, use check_account_profile instead — it lists their recent orders with no id needed.", parameters: { type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] } },

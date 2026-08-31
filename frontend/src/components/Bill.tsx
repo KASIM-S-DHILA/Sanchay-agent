@@ -11,9 +11,17 @@ export interface BillItem {
 export interface PaymentState {
   orderId: string;
   amount: number;
-  /** pending: Razorpay is open or yet to open. dismissed: the shopper closed
-   *  the window without finishing. paid: the Worker confirmed it. */
-  stage: "pending" | "dismissed" | "paid";
+  /** pending: Razorpay is open or yet to open. dismissed: the shopper
+   *  actually closed an opened window without finishing. awaiting_tap: the
+   *  order was created (by voice or by an audit-poll discovery of the
+   *  same) but Razorpay has never been opened yet — it's WAITING for the
+   *  shopper's first tap, which is required because it can't open itself
+   *  from a WebSocket tool-call response (no browser user gesture on the
+   *  call stack). Kept distinct from "dismissed" on purpose: reusing
+   *  "dismissed" for this used to show "you closed the payment window"
+   *  for an order that was never even opened, let alone closed — a real,
+   *  reported bug. paid: the Worker confirmed it. */
+  stage: "pending" | "dismissed" | "awaiting_tap" | "paid";
 }
 
 /**
@@ -232,6 +240,11 @@ export function Bill({
                   Your last attempt didn't go through — <strong>{rupees(payment!.amount)}</strong> is
                   still due. Try a different card or method.
                 </>
+              ) : payment!.stage === "awaiting_tap" ? (
+                <>
+                  Your order is ready — <strong>{rupees(payment!.amount)}</strong> due. Tap below to
+                  open the payment window.
+                </>
               ) : payment!.stage === "dismissed" ? (
                 <>
                   You closed the payment window before it finished. Nothing was charged and the bill
@@ -253,21 +266,23 @@ export function Bill({
             )}
             <button
               type="button"
-              // Draws the eye the instant this appears — this is the one
-              // moment a voice-triggered checkout needs a real tap to
-              // continue (Razorpay's modal can't open itself from a
-              // WebSocket tool-call response; see primeVoiceCheckout in
-              // App.tsx). Without a visual cue, a shopper who was just
-              // listening rather than looking at the screen can miss that
-              // anything changed at all.
-              className={`btn btn-sm ${payment!.stage === "dismissed" && !pendingOrder?.lastAttemptFailed ? "pay-resume-cue" : ""}`}
+              // Draws the eye the instant this appears. A voice checkout
+              // normally opens the payment window itself (see
+              // openVoiceCheckout in App.tsx), so reaching this button is
+              // the fallback path — the order exists but no window is on
+              // screen (opened in another tab, interrupted by a reload, or
+              // closed). Without a visual cue, a shopper who was listening
+              // rather than watching can miss that anything changed.
+              className={`btn btn-sm ${(payment!.stage === "awaiting_tap" || payment!.stage === "dismissed") && !pendingOrder?.lastAttemptFailed ? "pay-resume-cue" : ""}`}
               onClick={onResumePayment}
             >
               {pendingOrder?.lastAttemptFailed
                 ? "Retry payment"
-                : payment!.stage === "dismissed"
-                  ? "Resume payment"
-                  : "Reopen payment window"}
+                : payment!.stage === "awaiting_tap"
+                  ? "Open payment"
+                  : payment!.stage === "dismissed"
+                    ? "Resume payment"
+                    : "Reopen payment window"}
             </button>
           </div>
         </div>
