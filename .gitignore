@@ -5,5 +5,5 @@ frontend/dist/
 .env
 *.local
 .agents/
-gemini-agent/.env
+skills-lock.json
 

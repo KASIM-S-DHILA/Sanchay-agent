@@ -2,6 +2,7 @@ import { SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import { seedCatalog } from "../src/catalog/seed";
 import { bootstrapSchema } from "./helpers/bootstrap";
+import { signIn } from "./helpers/auth";
 
 let env: any;
 const START = "https://test/api/session/start";
@@ -63,7 +64,7 @@ describe("API: Session", () => {
 
   it("session/end marks the session ended and writes back preferences", async () => {
     const { sessionId } = await startSession({ user_email: "sess-end@example.com", budget: 100000 });
-    await addProduct(sessionId, "TEE-BLACK-001");
+    await addProduct(sessionId, "red-sports-tee");
 
     const res = await SELF.fetch("https://test/api/session/end", {
       method: "POST",
@@ -82,7 +83,7 @@ describe("API: Session", () => {
     const prefs: any = await env.DB.prepare(
       "SELECT previous_products FROM user_preferences WHERE user_id = 'sess-end@example.com'",
     ).first();
-    expect(JSON.parse(prefs?.previous_products || "[]")).toContain("TEE-BLACK-001");
+    expect(JSON.parse(prefs?.previous_products || "[]")).toContain("red-sports-tee");
 
     // Session is now invalid for further API calls
     const cartRes = await SELF.fetch("https://test/api/cart", {
@@ -102,12 +103,12 @@ describe("API: Catalog", () => {
     expect(data.data.products[0].price).toBeGreaterThan(100);
   });
 
-  it("GET /api/catalog?q=hoodie returns hoodie products (semantic or LIKE)", async () => {
-    const res = await SELF.fetch("https://test/api/catalog?q=hoodie");
+  it("GET /api/catalog?q=jacket returns jacket products (semantic or LIKE)", async () => {
+    const res = await SELF.fetch("https://test/api/catalog?q=jacket");
     const data: any = await res.json();
     expect(data.success).toBe(true);
     expect(
-      data.data.products.some((p: any) => p.name.toLowerCase().includes("hood")),
+      data.data.products.some((p: any) => p.name.toLowerCase().includes("jacket")),
     ).toBe(true);
   });
 });
@@ -120,18 +121,18 @@ describe("API: Cart", () => {
   });
 
   it("POST /api/cart/add adds a product with D1-snapshotted price", async () => {
-    const res = await addProduct(sessionId, "TEE-BLACK-001");
+    const res = await addProduct(sessionId, "red-sports-tee");
     const data: any = await res.json();
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.data.items.length).toBe(1);
     expect(data.data.total).toBe(79900);
-    expect(data.data.items[0].name).toBe("Black Classic Tee");
+    expect(data.data.items[0].name).toBe("Red Sports Tee");
   });
 
   it("adding the same product again merges quantities", async () => {
-    await addProduct(sessionId, "TEE-BLACK-001");
-    const res = await addProduct(sessionId, "TEE-BLACK-001");
+    await addProduct(sessionId, "red-sports-tee");
+    const res = await addProduct(sessionId, "red-sports-tee");
     const data: any = await res.json();
     expect(data.data.items.length).toBe(1);
     expect(data.data.items[0].quantity).toBe(3); // 1 + 1 + 1
@@ -139,6 +140,7 @@ describe("API: Cart", () => {
 
   it("invalid product fails", async () => {
     const res = await addProduct(sessionId, "FAKE-PRODUCT");
+    // (kept: this test asserts the fake id path, not a real product)
     const data: any = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toContain("No product with id");
@@ -146,7 +148,7 @@ describe("API: Cart", () => {
 
   it("budget-exceeded add fails and leaves the cart untouched", async () => {
     const { sessionId: budgetSid } = await startSession({ budget: 50000 }); // ₹500
-    const res = await addProduct(budgetSid, "TEE-BLACK-001"); // ₹799
+    const res = await addProduct(budgetSid, "red-sports-tee"); // ₹799
     const data: any = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toContain("budget");
@@ -159,26 +161,26 @@ describe("API: Cart", () => {
   });
 
   it("remove deletes the line item", async () => {
-    await addProduct(sessionId, "TEE-WHITE-002");
+    await addProduct(sessionId, "white-cotton-shirt");
     const res = await SELF.fetch("https://test/api/cart/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-session-id": sessionId },
-      body: JSON.stringify({ product_id: "TEE-WHITE-002" }),
+      body: JSON.stringify({ product_id: "white-cotton-shirt" }),
     });
     const data: any = await res.json();
     expect(data.success).toBe(true);
-    expect(data.data.items.some((i: any) => i.productId === "TEE-WHITE-002")).toBe(false);
+    expect(data.data.items.some((i: any) => i.productId === "white-cotton-shirt")).toBe(false);
   });
 
   it("partial remove decrements quantity", async () => {
-    await addProduct(sessionId, "HOODIE-GRAY-001", 3);
+    await addProduct(sessionId, "yellow-wool-jumper", 3);
     const res = await SELF.fetch("https://test/api/cart/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-session-id": sessionId },
-      body: JSON.stringify({ product_id: "HOODIE-GRAY-001", quantity: 2 }),
+      body: JSON.stringify({ product_id: "yellow-wool-jumper", quantity: 2 }),
     });
     const data: any = await res.json();
-    const item = data.data.items.find((i: any) => i.productId === "HOODIE-GRAY-001");
+    const item = data.data.items.find((i: any) => i.productId === "yellow-wool-jumper");
     expect(item.quantity).toBe(1);
   });
 
@@ -192,7 +194,7 @@ describe("API: Cart", () => {
   });
 
   it("cart endpoints without session → 401", async () => {
-    const addRes = await addProduct("no-such-session", "TEE-BLACK-001");
+    const addRes = await addProduct("no-such-session", "red-sports-tee");
     expect(addRes.status).toBe(401);
     const getRes = await SELF.fetch("https://test/api/cart", {
       headers: { "x-session-id": "no-such-session" },
@@ -202,11 +204,25 @@ describe("API: Cart", () => {
 });
 
 describe("API: Checkout", () => {
-  it("empty cart fails", async () => {
+  it("guest (no bearer token) is rejected even with items in the cart", async () => {
     const { sessionId } = await startSession();
+    await addProduct(sessionId, "red-sports-tee");
     const res = await SELF.fetch("https://test/api/checkout", {
       method: "POST",
       headers: { "x-session-id": sessionId },
+    });
+    expect(res.status).toBe(403);
+    const data: any = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("Sign in");
+  });
+
+  it("empty cart fails (once signed in)", async () => {
+    const { sessionId } = await startSession();
+    const token = await signIn(env, sessionId, "checkout-empty@example.com");
+    const res = await SELF.fetch("https://test/api/checkout", {
+      method: "POST",
+      headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
     });
     const data: any = await res.json();
     expect(data.success).toBe(false);
@@ -215,11 +231,12 @@ describe("API: Checkout", () => {
 
   it("checkout creates an order (or fails gracefully on gateway limits)", async () => {
     const { sessionId } = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001");
+    const token = await signIn(env, sessionId, "checkout-create@example.com");
+    await addProduct(sessionId, "red-sports-tee");
 
     const res = await SELF.fetch("https://test/api/checkout", {
       method: "POST",
-      headers: { "x-session-id": sessionId },
+      headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
     });
     const data: any = await res.json();
     if (data.success) {
@@ -234,7 +251,8 @@ describe("API: Checkout", () => {
 
   it("idempotent — active order returned instead of duplicate", async () => {
     const { sessionId } = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001");
+    const token = await signIn(env, sessionId, "checkout-idem@example.com");
+    await addProduct(sessionId, "red-sports-tee");
 
     // Seed an active order so checkout takes the idempotency path without
     // touching Razorpay (quota-proof)
@@ -247,11 +265,11 @@ describe("API: Checkout", () => {
 
     const res1 = await SELF.fetch("https://test/api/checkout", {
       method: "POST",
-      headers: { "x-session-id": sessionId },
+      headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
     });
     const res2 = await SELF.fetch("https://test/api/checkout", {
       method: "POST",
-      headers: { "x-session-id": sessionId },
+      headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
     });
     const d1: any = await res1.json();
     const d2: any = await res2.json();
@@ -289,8 +307,8 @@ describe("API: Audit", () => {
   it("returns call log for the session, chronological", async () => {
     const { sessionId } = await startSession();
 
-    await SELF.fetch("https://test/api/catalog?q=hoodie");
-    await addProduct(sessionId, "TEE-BLACK-001");
+    await SELF.fetch("https://test/api/catalog?q=jacket");
+    await addProduct(sessionId, "red-sports-tee");
     await SELF.fetch("https://test/api/cart", { headers: { "x-session-id": sessionId } });
 
     const res = await SELF.fetch(`https://test/api/audit?session_id=${sessionId}`, {

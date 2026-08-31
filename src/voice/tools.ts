@@ -1,68 +1,16 @@
-import type { Env } from "../types";
-
 /**
- * In-process tool execution for Sarvam voice tool calls.
- * Calls the same logic functions as the HTTP routes — identical enforcement
- * (stock, budget, idempotency) and identical api_call_log audit entries.
+ * Declares which voice/agent tools exist and what params each takes — the
+ * source of truth toolSchema.ts builds the public AGENT_TOOL_SCHEMAS from
+ * (see /api/tools, /openapi.yaml). Kept deliberately data-only: an earlier
+ * in-process tool-call dispatcher (executeToolCall) lived here too, built
+ * for a Sarvam-hosted voice runtime that called tools directly rather than
+ * over HTTP. That runtime was replaced by the browser-side Gemini Live
+ * integration (useGeminiLive.ts), which calls the plain REST endpoints
+ * directly — the dispatcher had zero callers and was removed. This list
+ * itself is still real: it's what an external AI agent's tool-calling
+ * schema is generated from, independent of which voice runtime (if any)
+ * exercises it.
  */
-
-export type ToolResult = Record<string, unknown>;
-
-export async function executeToolCall(
-  env: Env,
-  sessionId: string,
-  toolName: string,
-  params: Record<string, unknown>,
-): Promise<ToolResult> {
-  // Lazy imports keep the module graph flat and avoid cycles
-  const logic = await import("../api/logic");
-
-  switch (toolName) {
-    case "search_catalog":
-      return (await logic.searchCatalog(env, sessionId, String(params.query ?? ""))).body;
-    case "add_to_cart":
-      // Quantity range/integer validation happens inside addToCart, so
-      // voice calls get identical enforcement to the HTTP cart routes.
-      // idempotency_key lets Sarvam safely retry a tool call that timed out
-      // without double-adding the item.
-      return (
-        await logic.addToCart(
-          env,
-          sessionId,
-          String(params.product_id),
-          params.quantity,
-          params.idempotency_key ? String(params.idempotency_key) : undefined,
-        )
-      ).body;
-    case "remove_from_cart":
-      return (
-        await logic.removeFromCart(env, sessionId, String(params.product_id), params.quantity)
-      ).body;
-    case "get_cart":
-      return (await logic.getCart(env, sessionId)).body;
-    case "checkout":
-      return (await logic.checkoutCart(env, sessionId)).body;
-    case "get_order_status":
-      return (
-        await logic.getOrderStatus(env, sessionId, String(params.order_id ?? ""))
-      ).body;
-    case "set_budget":
-      return (await logic.setBudget(env, sessionId, params.budget)).body;
-    case "propose_add_to_cart":
-      return (
-        await logic.proposeAddToCart(env, sessionId, String(params.product_id), params.quantity)
-      ).body;
-    case "propose_remove_from_cart":
-      return (
-        await logic.proposeRemoveFromCart(env, sessionId, String(params.product_id), params.quantity)
-      ).body;
-    case "confirm_action":
-      return (await logic.confirmCartAction(env, sessionId, String(params.action_token ?? ""))).body;
-    default:
-      return { success: false, error: `Unknown tool: ${toolName}` };
-  }
-}
-
 export const VOICE_TOOLS = [
   { name: "search_catalog", params: ["query"] },
   { name: "add_to_cart", params: ["product_id", "quantity?", "idempotency_key?"] },

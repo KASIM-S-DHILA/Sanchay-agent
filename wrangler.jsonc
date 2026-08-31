@@ -65,9 +65,10 @@
   // Non-secret config. MERCHANT_MAX_ORDER_PAISE caps any single order
   // regardless of session/caller-declared budget (see checkoutCart in
   // src/api/logic.ts) — falls back to a hardcoded default if omitted.
-  // ADMIN_TOKEN gates /admin/* and /api/audit — set via
-  // `wrangler secret put ADMIN_TOKEN` in production; if unset those
-  // endpoints reject every request (see middleware/adminAuth.ts).
+  // ADMIN_TOKEN gates /admin/* only — set via `wrangler secret put
+  // ADMIN_TOKEN` in production; if unset those endpoints reject every
+  // request (see middleware/adminAuth.ts). /api/audit is gated
+  // separately, by the caller's own validated session (see api/audit.ts).
   "vars": {
     "MERCHANT_MAX_ORDER_PAISE": "5000000"
   }

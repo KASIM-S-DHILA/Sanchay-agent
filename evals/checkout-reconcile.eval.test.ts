@@ -2,6 +2,7 @@ import { SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import { seedCatalog } from "../src/catalog/seed";
 import { bootstrapSchema } from "./helpers/bootstrap";
+import { signIn } from "./helpers/auth";
 
 /**
  * Covers a real bug found in production testing: nothing ever removed
@@ -80,70 +81,100 @@ beforeAll(async () => {
 describe("Checkout reconciliation: paid items disappear from the cart", () => {
   it("a paid order's items are removed from the cart on the very next read", async () => {
     const sessionId = await startSession();
-    const addRes = await addProduct(sessionId, "TEE-BLACK-001", 1);
+    const addRes = await addProduct(sessionId, "red-sports-tee", 1);
     expect(addRes.success).toBe(true);
 
     // Simulate what the webhook would have marked paid — self-heal (not
     // the webhook path) is what's under test here.
     await env.DB.prepare("UPDATE cart_items SET quantity = quantity").run(); // no-op, keep cart as-is
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
 
     const cart = await getCart(sessionId);
     expect(cart.success).toBe(true);
-    expect(cart.data.items.find((i: any) => i.productId === "TEE-BLACK-001")).toBeUndefined();
+    expect(cart.data.items.find((i: any) => i.productId === "red-sports-tee")).toBeUndefined();
   });
 
   it("only the paid quantity is removed, not extra added after checkout", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 3);
+    await addProduct(sessionId, "red-sports-tee", 3);
 
     // Paid order only covers 1 of the 3 currently in the cart — as if 2
     // more were added to the cart after this order was created.
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
 
     const cart = await getCart(sessionId);
-    const line = cart.data.items.find((i: any) => i.productId === "TEE-BLACK-001");
+    const line = cart.data.items.find((i: any) => i.productId === "red-sports-tee");
     expect(line).toBeDefined();
     expect(line.quantity).toBe(2);
   });
 
   it("a second paid order for the same product removes it entirely, not negative", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    await addProduct(sessionId, "red-sports-tee", 1);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
     // First read reconciles and removes it.
     await getCart(sessionId);
 
     // A second, unrelated paid order somehow referencing the same product
     // (edge case — shouldn't happen in practice, but must not crash or go
     // negative) finds nothing left to remove and is a no-op.
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
     const cart = await getCart(sessionId);
     expect(cart.success).toBe(true);
-    expect(cart.data.items.find((i: any) => i.productId === "TEE-BLACK-001")).toBeUndefined();
+    expect(cart.data.items.find((i: any) => i.productId === "red-sports-tee")).toBeUndefined();
+  });
+
+  it("adding the SAME product again after it was already paid for is not immediately wiped by reconciliation (repeat purchase)", async () => {
+    // Regression test for a real bug: reconcilePaidOrders re-scanned EVERY
+    // paid order on EVERY cart read forever, with no memory of having
+    // already cleared it. addToCart's own response calls getCartPayload
+    // (which runs reconcilePaidOrders) to build its reply — so if this
+    // session had ever paid for red-sports-tee, adding it again later (a
+    // completely normal repeat purchase) got silently deleted by that very
+    // same response's own reconciliation pass, making add_to_cart look
+    // broken. See cart_cleared in schema.sql / reconcilePaidOrders in
+    // src/api/logic.ts.
+    const sessionId = await startSession();
+    await addProduct(sessionId, "red-sports-tee", 1);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
+    await getCart(sessionId); // reconciles — cart is now empty, order marked cart_cleared
+
+    // Repeat purchase: add the SAME product again, in a LATER, unrelated
+    // cart_items row.
+    const addRes = await addProduct(sessionId, "red-sports-tee", 1);
+    expect(addRes.success).toBe(true);
+    expect(addRes.data.items.find((i: any) => i.productId === "red-sports-tee")).toBeDefined();
+
+    // Must still be there on a completely separate subsequent read too —
+    // not just the add's own immediate response.
+    const cart = await getCart(sessionId);
+    const line = cart.data.items.find((i: any) => i.productId === "red-sports-tee");
+    expect(line).toBeDefined();
+    expect(line.quantity).toBe(1);
   });
 
   it("an unrelated item added after the paid order stays in the cart", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    await addProduct(sessionId, "red-sports-tee", 1);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
     // Shopper adds something new after paying for the first item.
-    await addProduct(sessionId, "TEE-WHITE-002", 1);
+    await addProduct(sessionId, "white-cotton-shirt", 1);
 
     const cart = await getCart(sessionId);
-    expect(cart.data.items.find((i: any) => i.productId === "TEE-BLACK-001")).toBeUndefined();
-    expect(cart.data.items.find((i: any) => i.productId === "TEE-WHITE-002")).toBeDefined();
+    expect(cart.data.items.find((i: any) => i.productId === "red-sports-tee")).toBeUndefined();
+    expect(cart.data.items.find((i: any) => i.productId === "white-cotton-shirt")).toBeDefined();
   });
 
   it("re-checking out after paying does not find a reusable idempotent order for the paid one", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    const token = await signIn(env, sessionId, "reconcile-recheckout@example.com");
+    await addProduct(sessionId, "red-sports-tee", 1);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
     await getCart(sessionId); // triggers reconciliation, cart is now empty
 
     const res = await SELF.fetch("https://test/api/checkout", {
       method: "POST",
-      headers: { "x-session-id": sessionId },
+      headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
     });
     const data: any = await res.json();
     // Empty cart now (paid item reconciled away, nothing re-added) —
@@ -157,7 +188,7 @@ describe("Checkout reconciliation: paid items disappear from the cart", () => {
 describe("Checkout reconciliation: pending (unpaid) order surfaces for resume", () => {
   it("GET /api/cart reports a pendingOrder when an active order exists", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
+    await addProduct(sessionId, "red-sports-tee", 1);
     const orderId = await insertActiveOrder(sessionId, 79900, "created");
 
     const cart = await getCart(sessionId);
@@ -168,8 +199,8 @@ describe("Checkout reconciliation: pending (unpaid) order surfaces for resume", 
 
   it("pendingOrder is null once the order is paid (and reconciled)", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
-    await insertPaidOrder(sessionId, [{ productId: "TEE-BLACK-001", quantity: 1 }], 79900);
+    await addProduct(sessionId, "red-sports-tee", 1);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
 
     const cart = await getCart(sessionId);
     expect(cart.data.pendingOrder).toBeNull();
@@ -187,5 +218,53 @@ describe("Checkout reconciliation: pending (unpaid) order surfaces for resume", 
     const sessionB = await startSession();
     const cartB = await getCart(sessionB);
     expect(cartB.data.pendingOrder).toBeNull();
+  });
+});
+
+describe("Checkout reconciliation: lastOrder disambiguates 'no pending order'", () => {
+  // Regression coverage for a real bug: check_payment_status (in
+  // useGeminiLive.ts) only ever looked at pendingOrder, which correctly
+  // becomes null the instant a payment succeeds — but that reads
+  // IDENTICALLY to "never checked out" or "reservation expired". A
+  // shopper asking "did I pay?" right after actually paying got told the
+  // payment wasn't successful, because there was no further signal to
+  // tell those three cases apart. lastOrder (added to getCart) fixes
+  // that by reporting the most recent order's status regardless of
+  // whether it's still active.
+  it("lastOrder is null when the session has never checked out at all", async () => {
+    const sessionId = await startSession();
+    const cart = await getCart(sessionId);
+    expect(cart.data.lastOrder).toBeNull();
+  });
+
+  it("lastOrder reports status 'paid' once a payment succeeds, even though pendingOrder is null", async () => {
+    const sessionId = await startSession();
+    await addProduct(sessionId, "red-sports-tee", 1);
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 79900);
+
+    const cart = await getCart(sessionId);
+    expect(cart.data.pendingOrder).toBeNull(); // ambiguous on its own...
+    expect(cart.data.lastOrder).toEqual({ status: "paid", amountPaise: 79900 }); // ...disambiguated here
+  });
+
+  it("lastOrder reports status 'created'/'attempted' while a payment is genuinely still pending", async () => {
+    const sessionId = await startSession();
+    await insertActiveOrder(sessionId, 50000, "created");
+
+    const cart = await getCart(sessionId);
+    expect(cart.data.lastOrder.status).toBe("created");
+    expect(cart.data.lastOrder.amountPaise).toBe(50000);
+  });
+
+  it("lastOrder reflects the most recent order when there are several", async () => {
+    const sessionId = await startSession();
+    await insertPaidOrder(sessionId, [{ productId: "red-sports-tee", quantity: 1 }], 10000);
+    await new Promise((r) => setTimeout(r, 5)); // ensure a distinct created_at ordering
+    const secondOrderId = await insertActiveOrder(sessionId, 20000, "created");
+
+    const cart = await getCart(sessionId);
+    expect(cart.data.pendingOrder?.orderId).toBe(secondOrderId);
+    expect(cart.data.lastOrder.amountPaise).toBe(20000);
+    expect(cart.data.lastOrder.status).toBe("created");
   });
 });

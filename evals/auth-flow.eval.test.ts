@@ -125,7 +125,7 @@ describe("Auth flow: first-ever sign-in migrates the current session", () => {
     await resetVerifyRateLimit();
     const email = "first-signin@example.com";
     const guestSessionId = await startSession();
-    await addProduct(guestSessionId, "TEE-BLACK-001");
+    await addProduct(guestSessionId, "red-sports-tee");
 
     await seedOtp(email);
     const verifyRes = await verifyOtp(email, KNOWN_CODE, guestSessionId);
@@ -138,7 +138,7 @@ describe("Auth flow: first-ever sign-in migrates the current session", () => {
 
     // Cart survived the migration.
     const cart = await getCart(guestSessionId);
-    expect(cart.data.items.some((i: any) => i.productId === "TEE-BLACK-001")).toBe(true);
+    expect(cart.data.items.some((i: any) => i.productId === "red-sports-tee")).toBe(true);
 
     // Session row now belongs to the account.
     const row: any = await env.DB.prepare("SELECT user_id FROM sessions WHERE id = ?")
@@ -153,7 +153,7 @@ describe("Auth flow: session hijack via mismatched sessionId is rejected", () =>
     await resetVerifyRateLimit();
     const email = "hijack-victim@example.com";
     const victimSession = await startSession();
-    await addProduct(victimSession, "TEE-BLACK-001");
+    await addProduct(victimSession, "red-sports-tee");
 
     // Attacker verifies their own email but claims the victim's session id
     // in the body while presenting a DIFFERENT (or no) x-session-id header.

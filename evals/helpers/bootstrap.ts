@@ -10,7 +10,8 @@ export async function bootstrapSchema(db: any): Promise<void> {
     `CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY, session_id TEXT, razorpay_order_id TEXT,
       amount INTEGER, currency TEXT, status TEXT, items_json TEXT,
-      payment_url TEXT, created_at TEXT, stock_released INTEGER DEFAULT 0)`,
+      payment_url TEXT, created_at TEXT, stock_released INTEGER DEFAULT 0,
+      cart_cleared INTEGER DEFAULT 0)`,
     `CREATE TABLE IF NOT EXISTS cart_items (
       id TEXT PRIMARY KEY, session_id TEXT NOT NULL, product_id TEXT NOT NULL,
       product_name TEXT NOT NULL, price INTEGER NOT NULL,
@@ -24,8 +25,8 @@ export async function bootstrapSchema(db: any): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_api_log_session ON api_call_log(session_id)`,
     `CREATE INDEX IF NOT EXISTS idx_api_log_ts ON api_call_log(created_at)`,
     `CREATE TABLE IF NOT EXISTS user_preferences (
-      user_id TEXT PRIMARY KEY, name TEXT, preferred_categories TEXT,
-      budget_preference INTEGER, previous_products TEXT, purchase_history TEXT,
+      user_id TEXT PRIMARY KEY, name TEXT,
+      previous_products TEXT, purchase_history TEXT,
       session_count INTEGER DEFAULT 0, last_active TEXT, updated_at TEXT)`,
     `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, name TEXT, email TEXT, created_at TEXT)`,
@@ -52,6 +53,11 @@ export async function bootstrapSchema(db: any): Promise<void> {
       token TEXT PRIMARY KEY, session_id TEXT NOT NULL, action TEXT NOT NULL,
       payload_json TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
       consumed_at TEXT)`,
+    `CREATE TABLE IF NOT EXISTS viewed_products (
+      session_id TEXT NOT NULL, product_id TEXT NOT NULL, product_name TEXT NOT NULL,
+      first_viewed_at TEXT NOT NULL, last_viewed_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, product_id))`,
+    `CREATE INDEX IF NOT EXISTS idx_viewed_products_session ON viewed_products(session_id, last_viewed_at)`,
   ];
   for (const stmt of statements) {
     await db.prepare(stmt).run().catch(() => { });

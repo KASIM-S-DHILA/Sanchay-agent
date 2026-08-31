@@ -1,10 +1,10 @@
 import { VOICE_TOOLS } from "./tools";
 
 /**
- * Machine-readable tool schema for AI buyers/agents — describes the same
- * six operations `executeToolCall` (tools.ts) actually implements, in a
- * shape compatible with common LLM tool-calling formats (OpenAI/Anthropic-
- * style JSON Schema function parameters).
+ * Machine-readable tool schema for AI buyers/agents — describes the
+ * commerce operations listed in VOICE_TOOLS (tools.ts), in a shape
+ * compatible with common LLM tool-calling formats (OpenAI/Anthropic-style
+ * JSON Schema function parameters).
  *
  * `VOICE_TOOLS` in tools.ts is the source of truth for which tools exist
  * and which params they take; this file adds human/LLM-facing descriptions
@@ -57,13 +57,13 @@ const TOOL_DETAILS: Record<(typeof VOICE_TOOLS)[number]["name"], ToolDetail> = {
   },
   get_cart: {
     description:
-      "Get the current cart: line items, total, remaining budget (null if the session has no budget set), and youMightAlsoLike (up to 3 in-stock cross-sell suggestions). Use this to confirm what's in the cart before checkout or when the shopper asks what's in their bag.",
+      "Get the current cart: line items, total, remaining budget (null if the session has no budget set), youMightAlsoLike (up to 3 in-stock cross-sell suggestions), and isSignedIn. Use this to confirm what's in the cart before checkout, when the shopper asks what's in their bag, or to check isSignedIn before calling checkout — checkout requires a real sign-in, not just guest browsing, and isSignedIn tells you that in advance instead of finding out from a rejected checkout call.",
     httpEquivalent: "GET /api/cart",
     params: {},
   },
   checkout: {
     description:
-      "Start checkout for the current cart. Automatically idempotent — calling this again while an order is already created/attempted returns that same order instead of creating a duplicate, so it's safe to call again if the result of a previous call is unclear. Fails gracefully (success: false) if the cart is empty, an item's stock vanished since it was added, or a concurrent checkout in another session won a race for the last unit of stock — in each case the affected item is removed from the cart and checkout must be retried. Every order is also checked against a merchant-configured maximum order amount, independent of any budget the caller declared — exceeding it is a graceful failure, not an exception.",
+      "Start checkout for the current cart. Requires the shopper to be signed in (see isSignedIn on get_cart) — browsing and building a cart work as a guest, but this call is rejected with success: false and an explanatory error if they haven't signed in yet; the cart itself is never lost, so just prompt them to sign in and retry. Automatically idempotent once signed in — calling this again while an order is already created/attempted returns that same order instead of creating a duplicate, so it's safe to call again if the result of a previous call is unclear. Fails gracefully (success: false) if the cart is empty, an item's stock vanished since it was added, or a concurrent checkout in another session won a race for the last unit of stock — in each case the affected item is removed from the cart and checkout must be retried. Every order is also checked against a merchant-configured maximum order amount, independent of any budget the caller declared — exceeding it is a graceful failure, not an exception.",
     httpEquivalent: "POST /api/checkout",
     params: {},
   },

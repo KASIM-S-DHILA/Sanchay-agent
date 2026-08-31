@@ -12,9 +12,13 @@ import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
 import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
-import { handleSeedCatalog, handleImportFlipkartCatalog } from "./api/admin";
+import { handleSeedCatalog, handleReplaceCatalog } from "./api/admin";
 import { handleSaveName } from "./api/user";
 import { handleAuthOtpSend, handleAuthOtpVerify } from "./api/auth";
+import { handleAccountProfile } from "./api/account";
+import { handleLogViewedProduct, handleGetViewedProducts } from "./api/viewedProducts";
+import { handleDescribeProducts } from "./api/describeProducts";
+import { handleProductDetails } from "./api/productDetails";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
 import { handleGeminiToken } from "./api/geminiToken";
 import { checkAdminToken } from "./middleware/adminAuth";
@@ -47,6 +51,16 @@ export default {
         response = await handleSessionBudget(request, env);
       } else if (url.pathname === "/api/session/history" && request.method === "GET") {
         response = await handleSessionHistory(request, env);
+      } else if (url.pathname === "/api/account/profile" && request.method === "GET") {
+        response = await handleAccountProfile(request, env);
+      } else if (url.pathname === "/api/viewed-products" && request.method === "POST") {
+        response = await handleLogViewedProduct(request, env);
+      } else if (url.pathname === "/api/viewed-products" && request.method === "GET") {
+        response = await handleGetViewedProducts(request, env);
+      } else if (url.pathname === "/api/describe-products" && request.method === "POST") {
+        response = await handleDescribeProducts(request, env);
+      } else if (url.pathname === "/api/product-details" && request.method === "POST") {
+        response = await handleProductDetails(request, env);
       } else if ((url.pathname === "/api/user/name") && (request.method === "POST" || request.method === "GET")) {
         response = await handleSaveName(request, env);
       } else if (url.pathname === "/api/auth/otp" && request.method === "POST") {
@@ -91,8 +105,8 @@ export default {
         response = await handleGeminiToken(request, env);
       } else if (url.pathname === "/admin/seed-catalog" && request.method === "POST") {
         response = checkAdminToken(env, request) ?? (await handleSeedCatalog(request, env));
-      } else if (url.pathname === "/admin/import-flipkart" && request.method === "POST") {
-        response = checkAdminToken(env, request) ?? (await handleImportFlipkartCatalog(request, env, url));
+      } else if (url.pathname === "/admin/replace-catalog" && request.method === "POST") {
+        response = checkAdminToken(env, request) ?? (await handleReplaceCatalog(request, env));
       } else {
         // Frontend SPA
         response = await env.ASSETS.fetch(request);

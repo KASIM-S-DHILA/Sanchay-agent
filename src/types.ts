@@ -62,8 +62,6 @@ export interface Session {
 
 export interface UserPreferences {
   name: string | null;
-  preferredCategories: string[];
-  budgetPreference: number | null;
   previousProducts: string[];
   purchaseHistory: string[];
   sessionCount: number;

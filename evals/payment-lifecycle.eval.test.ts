@@ -2,6 +2,7 @@ import { SELF } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import { seedCatalog } from "../src/catalog/seed";
 import { bootstrapSchema } from "./helpers/bootstrap";
+import { signIn } from "./helpers/auth";
 
 /**
  * Covers the payment lifecycle work added after the checkout-reconcile fix:
@@ -85,8 +86,8 @@ async function insertActiveOrder(
   return { orderId, dbId };
 }
 
-async function getOrderRow(dbId: string) {
-  return env.DB.prepare("SELECT * FROM orders WHERE id = ?").bind(dbId).first<any>();
+async function getOrderRow(dbId: string): Promise<any> {
+  return env.DB.prepare("SELECT * FROM orders WHERE id = ?").bind(dbId).first();
 }
 
 async function postWebhook(event: any) {
@@ -118,15 +119,15 @@ beforeAll(async () => {
 describe("payment.failed webhook", () => {
   it("marks the order 'attempted', releases stock immediately, and sets stock_released", async () => {
     const sessionId = await startSession();
-    const stockBefore = await getProductStock("TEE-BLACK-001");
-    await addProduct(sessionId, "TEE-BLACK-001", 2);
+    const stockBefore = await getProductStock("red-sports-tee");
+    await addProduct(sessionId, "red-sports-tee", 2);
 
     // checkoutCart would have decremented stock by 2 at order creation —
     // mirror that here since this test inserts the order directly.
-    await env.DB.prepare("UPDATE products SET stock = stock - 2 WHERE id = ?").bind("TEE-BLACK-001").run();
+    await env.DB.prepare("UPDATE products SET stock = stock - 2 WHERE id = ?").bind("red-sports-tee").run();
     const { orderId, dbId } = await insertActiveOrder(sessionId, 79900 * 2, {
       status: "created",
-      items: [{ productId: "TEE-BLACK-001", quantity: 2 }],
+      items: [{ productId: "red-sports-tee", quantity: 2 }],
     });
 
     const result = await postWebhook({
@@ -143,16 +144,20 @@ describe("payment.failed webhook", () => {
     expect(row.status).toBe("attempted");
     expect(row.stock_released).toBe(1);
 
-    const stockAfter = await getProductStock("TEE-BLACK-001");
+    const stockAfter = await getProductStock("red-sports-tee");
     expect(stockAfter).toBe(stockBefore); // fully restored
   });
 
   it("checkoutCart reuses the SAME order after a failed attempt instead of creating a new one", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
+    const token = await signIn(env, sessionId, "lifecycle-retry@example.com");
+    await addProduct(sessionId, "red-sports-tee", 1);
 
     const checkoutRes: any = await (
-      await SELF.fetch("https://test/api/checkout", { method: "POST", headers: { "x-session-id": sessionId } })
+      await SELF.fetch("https://test/api/checkout", {
+        method: "POST",
+        headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
+      })
     ).json();
     expect(checkoutRes.success).toBe(true);
     const firstOrderId = checkoutRes.data.orderId;
@@ -163,7 +168,10 @@ describe("payment.failed webhook", () => {
     });
 
     const retryRes: any = await (
-      await SELF.fetch("https://test/api/checkout", { method: "POST", headers: { "x-session-id": sessionId } })
+      await SELF.fetch("https://test/api/checkout", {
+        method: "POST",
+        headers: { "x-session-id": sessionId, Authorization: `Bearer ${token}` },
+      })
     ).json();
     expect(retryRes.success).toBe(true);
     expect(retryRes.data.orderId).toBe(firstOrderId);
@@ -174,10 +182,10 @@ describe("payment.failed webhook", () => {
     const sessionId = await startSession();
     const { orderId, dbId } = await insertActiveOrder(sessionId, 10000, {
       status: "created",
-      items: [{ productId: "TEE-BLACK-001", quantity: 1 }],
+      items: [{ productId: "red-sports-tee", quantity: 1 }],
     });
     await env.DB.prepare("UPDATE orders SET status = 'paid' WHERE id = ?").bind(dbId).run();
-    const stockBefore = await getProductStock("TEE-BLACK-001");
+    const stockBefore = await getProductStock("red-sports-tee");
 
     const result = await postWebhook({
       event: "payment.failed",
@@ -185,7 +193,7 @@ describe("payment.failed webhook", () => {
     });
     expect(result.success).toBe(true);
 
-    const stockAfter = await getProductStock("TEE-BLACK-001");
+    const stockAfter = await getProductStock("red-sports-tee");
     expect(stockAfter).toBe(stockBefore); // untouched — order was already paid
   });
 });
@@ -193,12 +201,12 @@ describe("payment.failed webhook", () => {
 describe("expiry reconciliation: both 'created' and 'attempted' orders expire at 15 minutes", () => {
   it("a 'created' order older than 15 minutes is cancelled and its stock released on cart read", async () => {
     const sessionId = await startSession();
-    await env.DB.prepare("UPDATE products SET stock = stock - 1 WHERE id = ?").bind("TEE-WHITE-002").run();
-    const stockBefore = await getProductStock("TEE-WHITE-002");
+    await env.DB.prepare("UPDATE products SET stock = stock - 1 WHERE id = ?").bind("white-cotton-shirt").run();
+    const stockBefore = await getProductStock("white-cotton-shirt");
     const { dbId } = await insertActiveOrder(sessionId, 50000, {
       status: "created",
       ageMs: 16 * 60 * 1000, // 16 minutes old
-      items: [{ productId: "TEE-WHITE-002", quantity: 1 }],
+      items: [{ productId: "white-cotton-shirt", quantity: 1 }],
     });
 
     const cart = await getCart(sessionId);
@@ -207,7 +215,7 @@ describe("expiry reconciliation: both 'created' and 'attempted' orders expire at
     const row = await getOrderRow(dbId);
     expect(row.status).toBe("cancelled");
     expect(row.stock_released).toBe(1);
-    expect(await getProductStock("TEE-WHITE-002")).toBe(stockBefore + 1);
+    expect(await getProductStock("white-cotton-shirt")).toBe(stockBefore + 1);
   });
 
   it("an 'attempted' order older than 15 minutes also expires (not just 'created')", async () => {
@@ -227,11 +235,11 @@ describe("expiry reconciliation: both 'created' and 'attempted' orders expire at
 
   it("an order failed via payment.failed (stock already released) is not double-released on later expiry", async () => {
     const sessionId = await startSession();
-    await env.DB.prepare("UPDATE products SET stock = stock - 1 WHERE id = ?").bind("TEE-BLACK-001").run();
-    const stockAfterReserve = await getProductStock("TEE-BLACK-001");
+    await env.DB.prepare("UPDATE products SET stock = stock - 1 WHERE id = ?").bind("red-sports-tee").run();
+    const stockAfterReserve = await getProductStock("red-sports-tee");
     const { orderId, dbId } = await insertActiveOrder(sessionId, 79900, {
       status: "created",
-      items: [{ productId: "TEE-BLACK-001", quantity: 1 }],
+      items: [{ productId: "red-sports-tee", quantity: 1 }],
     });
 
     // Fails immediately — releases stock once, marks attempted.
@@ -239,7 +247,7 @@ describe("expiry reconciliation: both 'created' and 'attempted' orders expire at
       event: "payment.failed",
       payload: { payment: { entity: { id: "pay_x", order_id: orderId } } },
     });
-    const stockAfterFail = await getProductStock("TEE-BLACK-001");
+    const stockAfterFail = await getProductStock("red-sports-tee");
     expect(stockAfterFail).toBe(stockAfterReserve + 1);
 
     // Backdate it past expiry and let reconciliation see it too.
@@ -249,7 +257,7 @@ describe("expiry reconciliation: both 'created' and 'attempted' orders expire at
 
     await getCart(sessionId); // triggers reconcileExpiredOrders
 
-    const stockAfterExpiry = await getProductStock("TEE-BLACK-001");
+    const stockAfterExpiry = await getProductStock("red-sports-tee");
     expect(stockAfterExpiry).toBe(stockAfterFail); // unchanged — no double release
 
     const row = await getOrderRow(dbId);
@@ -304,10 +312,10 @@ describe("getPendingOrder: expiresInSeconds and lastAttemptFailed", () => {
 describe("webhook variants converge on the same 'paid' handling", () => {
   it("order.paid marks the order paid and clears matching cart items", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
+    await addProduct(sessionId, "red-sports-tee", 1);
     const { orderId } = await insertActiveOrder(sessionId, 79900, {
       status: "created",
-      items: [{ productId: "TEE-BLACK-001", quantity: 1 }],
+      items: [{ productId: "red-sports-tee", quantity: 1 }],
     });
 
     const result = await postWebhook({
@@ -321,15 +329,15 @@ describe("webhook variants converge on the same 'paid' handling", () => {
 
     const cart = await getCart(sessionId);
     expect(cart.data.pendingOrder).toBeNull();
-    expect(cart.data.items.find((i: any) => i.productId === "TEE-BLACK-001")).toBeUndefined();
+    expect(cart.data.items.find((i: any) => i.productId === "red-sports-tee")).toBeUndefined();
   });
 
   it("payment_link.paid resolves the order via notes.order_id and clears the cart", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001", 1);
+    await addProduct(sessionId, "red-sports-tee", 1);
     const { orderId } = await insertActiveOrder(sessionId, 79900, {
       status: "created",
-      items: [{ productId: "TEE-BLACK-001", quantity: 1 }],
+      items: [{ productId: "red-sports-tee", quantity: 1 }],
     });
 
     const result = await postWebhook({
@@ -342,7 +350,7 @@ describe("webhook variants converge on the same 'paid' handling", () => {
     expect(result.success).toBe(true);
 
     const cart = await getCart(sessionId);
-    expect(cart.data.items.find((i: any) => i.productId === "TEE-BLACK-001")).toBeUndefined();
+    expect(cart.data.items.find((i: any) => i.productId === "red-sports-tee")).toBeUndefined();
   });
 
   it("payment_link.paid with no linked order_id in notes is ignored, not an error", async () => {

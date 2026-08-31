@@ -6,7 +6,12 @@ function normalizeName(input: string): string | null {
   const m = input.trim().match(/([A-Za-z\u0900-\u097F]{2,30})/);
   if (!m) return null;
   const n = m[1].trim();
-  if (!/^[\p{L} ]{2,30}$/u.test(n)) return null;
+  // \p{L} alone matches Unicode LETTERS only — it excludes combining marks
+  // (category Mc/Mn), which is exactly what Devanagari vowel signs (matras)
+  // are: e.g. "कासिम" is क + ा(Mc) + स + ि(Mn) + म, so \p{L} alone rejected
+  // every Hindi name containing a matra as "not 2-30 letters" even though
+  // it plainly is one. \p{M} adds those combining marks back in.
+  if (!/^[\p{L}\p{M} ]{2,30}$/u.test(n)) return null;
   return n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
 }
 
@@ -74,8 +79,8 @@ export async function handleSaveName(request: Request, env: Env): Promise<Respon
 
   const now = new Date().toISOString();
   await env.DB.prepare(
-    `INSERT INTO user_preferences (user_id, name, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at)
-     VALUES (?, ?, '[]', NULL, '[]', '[]', 0, ?, ?)
+    `INSERT INTO user_preferences (user_id, name, previous_products, purchase_history, session_count, last_active, updated_at)
+     VALUES (?, ?, '[]', '[]', 0, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
   )
     .bind(userId, name, now, now)

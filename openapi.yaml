@@ -32,7 +32,7 @@ info:
     - CORS is wildcard (`Access-Control-Allow-Origin: *`) on every response.
 
     ## Known gaps (documented, not silently fixed)
-    - **`/admin/seed-catalog` and `/admin/import-flipkart` require
+    - **`/admin/seed-catalog` and `/admin/replace-catalog` require
       `X-Admin-Token`**, matched against the deployed `ADMIN_TOKEN` secret.
       If that secret is not configured, both endpoints are disabled (503)
       rather than left open. There is still no per-operator identity or
@@ -636,53 +636,6 @@ paths:
           content:
             application/yaml:
               schema: { type: string }
-
-  /admin/import-flipkart:
-    post:
-      operationId: importFlipkartCatalog
-      tags: [Admin]
-      summary: Import the curated Flipkart product subset
-      description: |
-        Requires the `X-Admin-Token` header — same gate and same 503-if-
-        unconfigured behavior as `/admin/seed-catalog`. Idempotent
-        (`INSERT OR IGNORE`) — re-running never overwrites an existing
-        product's live price/stock. Embedding the imported products for
-        semantic search is a separate, optional step because it makes one
-        Workers AI call per batch of new products.
-      parameters:
-        - name: embed
-          in: query
-          required: false
-          schema: { type: string, enum: ["true"] }
-          description: Pass `?embed=true` to also run embedding after import.
-      security: [{ AdminToken: [] }]
-      responses:
-        "200":
-          description: Import completed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success: { type: boolean, example: true }
-                  data:
-                    type: object
-                    properties:
-                      status: { type: string, example: ok }
-                      message: { type: string }
-                      imported: { type: integer, description: "Newly inserted rows this run." }
-                      skippedInvalid: { type: integer, description: "Curated JSON entries that failed defensive validation and were not attempted." }
-                      total: { type: integer, description: "Valid candidate rows considered (imported + already-present)." }
-        "401":
-          description: Missing or incorrect X-Admin-Token
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "503":
-          description: ADMIN_TOKEN not configured for this deployment — admin endpoints are disabled
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
 components:
   securitySchemes:

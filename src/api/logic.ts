@@ -61,8 +61,8 @@ export async function startSession(
   if (email) {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS user_preferences (
-        user_id TEXT PRIMARY KEY, preferred_categories TEXT,
-        budget_preference INTEGER, previous_products TEXT, purchase_history TEXT,
+        user_id TEXT PRIMARY KEY,
+        previous_products TEXT, purchase_history TEXT,
         session_count INTEGER DEFAULT 0, last_active TEXT, updated_at TEXT)`,
     ).run();
     const row: any = await env.DB.prepare("SELECT * FROM user_preferences WHERE user_id = ?")
@@ -71,8 +71,6 @@ export async function startSession(
     userPreferences = row
       ? {
         name: row.name ?? null,
-        preferredCategories: JSON.parse(row.preferred_categories || "[]"),
-        budgetPreference: row.budget_preference ?? null,
         previousProducts: JSON.parse(row.previous_products || "[]"),
         purchaseHistory: JSON.parse(row.purchase_history || "[]"),
         sessionCount: row.session_count || 0,
@@ -80,16 +78,14 @@ export async function startSession(
       }
       : {
         name: null,
-        preferredCategories: [],
-        budgetPreference: null,
         previousProducts: [],
         purchaseHistory: [],
         sessionCount: 0,
         lastActive: null,
       };
     await env.DB.prepare(
-      `INSERT INTO user_preferences (user_id, name, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO user_preferences (user_id, name, previous_products, purchase_history, session_count, last_active, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET
          session_count = session_count + 1,
          last_active = excluded.last_active,
@@ -98,8 +94,6 @@ export async function startSession(
       .bind(
         email,
         userPreferences.name,
-        JSON.stringify(userPreferences.preferredCategories),
-        userPreferences.budgetPreference,
         JSON.stringify(userPreferences.previousProducts),
         JSON.stringify(userPreferences.purchaseHistory),
         0,
@@ -129,9 +123,9 @@ export async function startSession(
  *    order" without the shopper repeating the id.
  *  - previous_categories: derived from user_preferences.previous_products
  *    (the field endSession actually writes) by looking up each product's
- *    category — NOT from preferred_categories, which nothing in this
- *    codebase ever writes and would always resolve to an empty, silently
- *    fabricated-looking signal. Same pattern as getCrossSellSuggestions.
+ *    category. Same pattern as getCrossSellSuggestions — a
+ *    preferred_categories column would have been the more direct source
+ *    but never had a writer and was removed as dead schema.
  *  - products_discussed: sourced from user_preferences.previous_products
  *    directly (requires the session to have an associated email;
  *    anonymous sessions get empty strings here).
@@ -280,6 +274,202 @@ export async function getPurchaseHistory(
   });
 }
 
+/**
+ * Full account profile for the "tell the shopper about their own history,
+ * and use it to bias search toward what they actually like" tool
+ * (check_account_profile in useGeminiLive.ts / GET /api/account/profile in
+ * api/account.ts). Distinct from getPurchaseHistory (which only returns 2
+ * orders for the greeting's background context) — this is the on-demand,
+ * shopper-requested version: more orders, plus derived signals
+ * (favoriteCategories, totalSpentPaise) getPurchaseHistory has no reason
+ * to compute for a greeting line.
+ *
+ * favoriteCategories is derived the same way getCrossSellSuggestions
+ * already does — categories of products actually appearing in PAID
+ * orders' items_json, joined against products.category. An earlier
+ * user_preferences.preferred_categories column would have been the
+ * "obvious" source but was always empty (no writer ever existed) and was
+ * removed as dead schema.
+ *
+ * Deliberately does NOT take a userId parameter from the caller — the
+ * caller only ever gets ITS OWN account's profile, resolved from userId
+ * (already validated as this account's real, OTP-verified identity by
+ * handleAccountProfile before this is called). There is no "whose
+ * profile" argument anywhere in this function's signature on purpose.
+ */
+export async function getAccountProfile(
+  env: Env,
+  userId: string,
+): Promise<{
+  email: string;
+  name: string | null;
+  memberSince: string | null;
+  totalOrders: number;
+  totalSpentPaise: number;
+  favoriteCategories: string[];
+  recentOrders: { orderId: string; amountPaise: number; items: { name: string; quantity: number }[]; createdAt: string }[];
+}> {
+  const ORDER_CAP = 10; // recentOrders is bounded — a shopper-requested summary, not a full account export
+
+  const [userRow, prefsRow, totalsRow, orderRows] = await Promise.all([
+    env.DB.prepare("SELECT email, created_at FROM users WHERE id = ?").bind(userId).first<any>(),
+    env.DB.prepare("SELECT name FROM user_preferences WHERE user_id = ?").bind(userId).first<any>(),
+    // True lifetime totals — computed separately from recentOrders below so
+    // "total spent" reflects the WHOLE paid history, not just however many
+    // of the most recent orders fit under the display cap.
+    env.DB.prepare(
+      `SELECT COUNT(*) as c, COALESCE(SUM(o.amount), 0) as total
+       FROM orders o
+       JOIN sessions s ON s.id = o.session_id
+       WHERE s.user_id = ? AND o.status = 'paid'`,
+    )
+      .bind(userId)
+      .first<any>(),
+    (
+      await env.DB.prepare(
+        `SELECT o.razorpay_order_id, o.amount, o.items_json, o.created_at
+         FROM orders o
+         JOIN sessions s ON s.id = o.session_id
+         WHERE s.user_id = ? AND o.status = 'paid'
+         ORDER BY o.created_at DESC
+         LIMIT ?`,
+      )
+        .bind(userId, ORDER_CAP)
+        .all()
+    ).results ?? [],
+  ]);
+
+  const recentOrders = (orderRows as any[]).map((r) => {
+    let items: { name: string; quantity: number; productId?: string }[] = [];
+    try {
+      const parsed = JSON.parse(r.items_json || "[]");
+      items = Array.isArray(parsed)
+        ? parsed.map((i: any) => ({ name: String(i.name ?? "item"), quantity: Number(i.quantity) || 1, productId: i.productId }))
+        : [];
+    } catch { /* malformed items_json — treat as no items rather than throw */ }
+    return {
+      orderId: r.razorpay_order_id as string,
+      amountPaise: r.amount as number,
+      items: items.map(({ name, quantity }) => ({ name, quantity })),
+      createdAt: r.created_at as string,
+    };
+  });
+
+  const totalOrders = (totalsRow?.c as number) ?? 0;
+  const totalSpentPaise = (totalsRow?.total as number) ?? 0;
+
+  // Favorite categories — every distinct product id across all paid
+  // orders (not just the capped recentOrders view above; this reruns the
+  // same JOIN so the signal reflects full purchase history even beyond the
+  // 10-order display cap).
+  let favoriteCategories: string[] = [];
+  try {
+    const allItemsRows: any[] = (
+      await env.DB.prepare(
+        `SELECT o.items_json
+         FROM orders o
+         JOIN sessions s ON s.id = o.session_id
+         WHERE s.user_id = ? AND o.status = 'paid'`,
+      )
+        .bind(userId)
+        .all()
+    ).results ?? [];
+    const productIds = new Set<string>();
+    for (const row of allItemsRows) {
+      try {
+        const parsed = JSON.parse(row.items_json || "[]");
+        if (Array.isArray(parsed)) for (const i of parsed) if (i.productId) productIds.add(String(i.productId));
+      } catch { /* skip malformed row */ }
+    }
+    if (productIds.size > 0) {
+      const ids = [...productIds];
+      const placeholders = ids.map(() => "?").join(",");
+      const catRows: any[] = (
+        await env.DB.prepare(`SELECT category, COUNT(*) as c FROM products WHERE id IN (${placeholders}) GROUP BY category ORDER BY c DESC`)
+          .bind(...ids)
+          .all()
+      ).results ?? [];
+      favoriteCategories = catRows.map((r) => r.category as string).filter(Boolean).slice(0, 5);
+    }
+  } catch (e) {
+    console.error("getAccountProfile: favoriteCategories derivation failed:", e);
+  }
+
+  return {
+    email: (userRow?.email as string) ?? userId,
+    name: (prefsRow?.name as string | null) ?? null,
+    memberSince: (userRow?.created_at as string | null) ?? null,
+    totalOrders,
+    totalSpentPaise,
+    favoriteCategories,
+    recentOrders,
+  };
+}
+
+/** Distinct products logged as "seen" this session before a dwell-time
+ *  debounce is applied — see logViewedProduct's own comment for why a
+ *  fixed cap matters here the same way it does for purchase history. */
+const VIEWED_PRODUCTS_CAP = 8;
+
+/**
+ * Records that a floating product-detail window for this product stayed
+ * open long enough to count as a genuine "seen" signal — called from
+ * handleLogViewedProduct (api/viewedProducts.ts) once the frontend's own
+ * dwell-time debounce (MIN_DWELL_MS, see useProductWindows.ts) has already
+ * elapsed, not on every open event. Without that debounce upstream, a
+ * misfire (double-tap, or the model opening then immediately closing to
+ * correct a wrong product_id) would log a "seen" that never really
+ * happened and later get pitched back to the shopper as if it had.
+ *
+ * Upsert, not insert — reopening something already seen this session
+ * bumps last_viewed_at instead of adding a duplicate row, so "recently
+ * seen" reflects genuine recency rather than repeat-view noise.
+ */
+export async function logViewedProduct(env: Env, sessionId: string, productId: string): Promise<void> {
+  const product = await env.DB.prepare("SELECT name FROM products WHERE id = ?").bind(productId).first<{ name: string }>();
+  if (!product) return; // a hallucinated/stale id — nothing real to log
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO viewed_products (session_id, product_id, product_name, first_viewed_at, last_viewed_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, product_id) DO UPDATE SET last_viewed_at = excluded.last_viewed_at`,
+  )
+    .bind(sessionId, productId, product.name, now, now)
+    .run();
+}
+
+/**
+ * Recently seen products for THIS session, capped and newest-first — used
+ * two ways: (1) injected into the greeting as background context (mirrors
+ * fetchHistorySummary's purchase-history line — "never volunteer
+ * unprompted" applies identically here, see useGeminiLive.ts), and (2)
+ * available to check_account_profile-style tools so the agent can pitch
+ * back something the shopper looked at but never bought, without needing
+ * its own memory of the call to do so.
+ *
+ * Scoped by session_id directly (not through sessions.user_id like
+ * getPurchaseHistory) — "seen" is meaningful even for a guest who never
+ * signs in, unlike purchase history which requires a real account to
+ * exist at all. If this session's user_id later changes via
+ * migrateGuestSessionToUser, these rows are already attached to the same
+ * session_id and need no separate merge step.
+ */
+export async function getViewedProducts(
+  env: Env,
+  sessionId: string,
+  limit = VIEWED_PRODUCTS_CAP,
+): Promise<{ productId: string; name: string; lastViewedAt: string }[]> {
+  const rows: any[] = (
+    await env.DB.prepare(
+      "SELECT product_id, product_name, last_viewed_at FROM viewed_products WHERE session_id = ? ORDER BY last_viewed_at DESC LIMIT ?",
+    )
+      .bind(sessionId, limit)
+      .all()
+  ).results ?? [];
+  return rows.map((r) => ({ productId: r.product_id as string, name: r.product_name as string, lastViewedAt: r.last_viewed_at as string }));
+}
+
 export async function endSession(env: Env, sessionId: string): Promise<void> {
   await env.DB.prepare("UPDATE sessions SET status = 'ended' WHERE id = ?").bind(sessionId).run();
 
@@ -406,13 +596,19 @@ export async function clearPaidItemsFromCart(
  * skips it).
  */
 async function reconcilePaidOrders(env: Env, sessionId: string): Promise<void> {
+  // Only orders NOT yet cleared — without this filter, a paid order's
+  // items were re-cleared on literally every future cart read forever,
+  // which silently deleted a legitimate LATER add of the same product
+  // (a normal repeat purchase) the moment the very next reconciliation
+  // pass ran — see cart_cleared's own comment in schema.sql.
   const paidOrders: any[] = (
-    await env.DB.prepare("SELECT items_json FROM orders WHERE session_id = ? AND status = 'paid'")
+    await env.DB.prepare("SELECT id, items_json FROM orders WHERE session_id = ? AND status = 'paid' AND cart_cleared = 0")
       .bind(sessionId)
       .all()
   ).results ?? [];
   for (const row of paidOrders) {
     await clearPaidItemsFromCart(env, sessionId, row.items_json);
+    await env.DB.prepare("UPDATE orders SET cart_cleared = 1 WHERE id = ?").bind(row.id).run();
   }
 }
 
@@ -487,9 +683,10 @@ async function getCartPayload(env: Env, sessionId: string) {
  *     (written by endSession) and purchase_history (written by the
  *     Razorpay webhook on payment.captured) when the cart alone gives no
  *     signal yet (e.g. cart just emptied, or anonymous session with an
- *     empty cart). Deliberately NOT using user_preferences.
- *     preferred_categories — that field has no writer anywhere in this
- *     codebase and would always be an empty fabricated signal.
+ *     empty cart). An earlier `preferred_categories` column existed on
+ *     user_preferences but was always empty (nothing ever wrote it) and
+ *     was removed as dead schema — this signal was always meant to come
+ *     from real purchase/browse behavior, not a fabricated preference.
  * Returns [] rather than guessing when there's truly no real signal.
  */
 async function getCrossSellSuggestions(
@@ -592,8 +789,9 @@ async function getBudget(env: Env, sessionId: string): Promise<number | null> {
  * persona described handling it.
  *
  * Deliberately session-scoped, never account-scoped: budget_paise lives
- * on `sessions`, not `user_preferences` (the latter has an unused
- * budget_preference column nothing writes to). A budget set today has no
+ * on `sessions`, not `user_preferences` (which has no budget column at
+ * all — an earlier `budget_preference` column existed but was always
+ * NULL and was removed as dead schema). A budget set today has no
  * bearing on tomorrow's session, signed in or not — every session starts
  * uncapped unless the shopper states one again. This is what makes "the
  * cap is temporary" true, not a policy this function has to enforce.
@@ -709,11 +907,37 @@ async function getPendingOrder(
   };
 }
 
+/**
+ * The session's single most recent order, of ANY status — not just an
+ * active pending one. Exists specifically to fix an ambiguity in
+ * check_payment_status (see useGeminiLive.ts): once a payment succeeds,
+ * getPendingOrder correctly returns null (nothing left to resume), but
+ * "no pending order" reads identically whether the shopper just paid,
+ * had their reservation expire, or never checked out at all. Without this,
+ * asking "did my payment go through" right after paying got back
+ * {hasPendingPayment:false} with zero further signal, and the agent had no
+ * basis to say anything but "no" — even though the true answer was "yes,
+ * already paid".
+ */
+async function getMostRecentOrder(
+  env: Env,
+  sessionId: string,
+): Promise<{ status: string; amountPaise: number } | null> {
+  const row: any = await env.DB.prepare(
+    "SELECT status, amount FROM orders WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+  )
+    .bind(sessionId)
+    .first();
+  if (!row) return null;
+  return { status: row.status as string, amountPaise: row.amount as number };
+}
+
 export async function getCart(env: Env, sessionId: string): Promise<LogicResult> {
   const cart = await getCartPayload(env, sessionId);
   const budget = await getBudget(env, sessionId);
   const youMightAlsoLike = await getCrossSellSuggestions(env, sessionId);
   const pendingOrder = await getPendingOrder(env, sessionId);
+  const lastOrder = await getMostRecentOrder(env, sessionId);
   const body = {
     success: true as const,
     data: {
@@ -721,6 +945,13 @@ export async function getCart(env: Env, sessionId: string): Promise<LogicResult>
       budgetRemaining: budget == null ? null : Math.max(0, budget - cart.total),
       youMightAlsoLike,
       pendingOrder,
+      lastOrder,
+      // isSignedIn is deliberately NOT computed here from sessions.user_id —
+      // handleCartGet fills it in from a verified bearer token instead. See
+      // the comment on handleCheckout's auth gate for why user_id alone is
+      // not proof of a real sign-in (the older startSession({user_email})
+      // path sets it with no authentication at all).
+      isSignedIn: false,
     },
   };
   await logCall(env, sessionId, "/api/cart", null, body);
@@ -897,6 +1128,68 @@ async function lookupCachedProductId(
   if (nameMatch) return { kind: "resolved", productId: nameMatch.productId };
 
   return { kind: "unresolved", cached };
+}
+
+/**
+ * Full product info for one or more ids, backing the "show floating detail
+ * window(s)" voice tool (show_product_detail in useGeminiLive.ts /
+ * handleProductDetails in api/productDetails.ts). Distinct from
+ * searchCatalog: this is a direct-by-id lookup with no query/ranking, used
+ * once the shopper (or model) already knows which specific products they
+ * mean, not for discovery.
+ *
+ * Each requested id independently resolves or fails — a mix of good and
+ * bad ids in one call returns detail for the good ones and lists the bad
+ * ones separately, rather than failing the whole batch for one wrong id
+ * (which the model recovers from the same way add_to_cart already does:
+ * lookupCachedProductId self-heals a slightly-wrong id against this
+ * session's last search_catalog results before giving up on it).
+ */
+export async function getProductDetails(
+  env: Env,
+  sessionId: string,
+  productIds: string[],
+): Promise<{
+  found: { productId: string; name: string; description: string; price: number; price_display: string; category: string; stock: number; image_url: string | null }[];
+  notFound: string[];
+}> {
+  const found: { productId: string; name: string; description: string; price: number; price_display: string; category: string; stock: number; image_url: string | null }[] = [];
+  const notFound: string[] = [];
+
+  for (const rawId of productIds) {
+    let id = rawId;
+    let row = await env.DB.prepare("SELECT id, name, description, price, category, stock, image_url FROM products WHERE id = ?")
+      .bind(id)
+      .first<any>();
+
+    if (!row && sessionId) {
+      const lookup = await lookupCachedProductId(env, sessionId, rawId);
+      if (lookup.kind === "resolved") {
+        id = lookup.productId;
+        row = await env.DB.prepare("SELECT id, name, description, price, category, stock, image_url FROM products WHERE id = ?")
+          .bind(id)
+          .first<any>();
+      }
+    }
+
+    if (!row) {
+      notFound.push(rawId);
+      continue;
+    }
+
+    found.push({
+      productId: row.id,
+      name: row.name,
+      description: row.description,
+      price: row.price,
+      price_display: `₹${(row.price / 100).toLocaleString("en-IN")}`,
+      category: row.category,
+      stock: row.stock,
+      image_url: row.image_url ?? null,
+    });
+  }
+
+  return { found, notFound };
 }
 
 // ---------------------------------------------------------------------------

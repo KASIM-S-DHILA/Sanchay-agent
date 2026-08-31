@@ -167,8 +167,16 @@ async function handlePaymentCaptured(env: Env, paymentId: string, orderId: strin
     // reserves stock, so nothing else in this codebase ever did this
     // until now. Removing only the paid items/quantities (not the whole
     // cart) means anything added after checkout started stays put.
+    //
+    // cart_cleared is set here (the fast path) so reconcilePaidOrders'
+    // safety-net pass on the next cart read sees this order as already
+    // handled and skips it — otherwise it would re-run this exact
+    // clearing again on the very next /api/cart read and delete a
+    // legitimate LATER add of the same product, which is what made
+    // add_to_cart look broken for a repeat purchase.
     if (sessionId && orderRow.items_json) {
       await clearPaidItemsFromCart(env, sessionId, orderRow.items_json);
+      await env.DB.prepare("UPDATE orders SET cart_cleared = 1 WHERE razorpay_order_id = ?").bind(orderId).run();
     }
 
     if (sessionId && orderRow.items_json) {
@@ -186,8 +194,6 @@ async function handlePaymentCaptured(env: Env, paymentId: string, orderId: strin
           await env.DB.prepare(
             `CREATE TABLE IF NOT EXISTS user_preferences (
                 user_id TEXT PRIMARY KEY,
-                preferred_categories TEXT,
-                budget_preference INTEGER,
                 previous_products TEXT,
                 purchase_history TEXT,
                 session_count INTEGER DEFAULT 0,
@@ -196,7 +202,7 @@ async function handlePaymentCaptured(env: Env, paymentId: string, orderId: strin
               )`,
           ).run();
           await env.DB.prepare(
-            "INSERT OR IGNORE INTO user_preferences (user_id, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at) VALUES (?, '[]', NULL, '[]', '[]', 0, NULL, NULL)",
+            "INSERT OR IGNORE INTO user_preferences (user_id, previous_products, purchase_history, session_count, last_active, updated_at) VALUES (?, '[]', '[]', 0, NULL, NULL)",
           )
             .bind(userEmail)
             .run();

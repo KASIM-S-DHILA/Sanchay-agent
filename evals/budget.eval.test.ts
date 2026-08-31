@@ -70,7 +70,7 @@ describe("Budget: basic set/change", () => {
 
   it("changing an existing budget updates remaining against current cart", async () => {
     const sessionId = await startSession();
-    await addProduct(sessionId, "TEE-BLACK-001");
+    await addProduct(sessionId, "red-sports-tee");
     const cart = await getCart(sessionId);
 
     const res = await setBudget(sessionId, { budget: 5000 });
@@ -107,7 +107,7 @@ describe("Budget: rejects invalid input", () => {
   it("rejects a budget below the current cart total, leaving the old budget untouched", async () => {
     const sessionId = await startSession();
     await setBudget(sessionId, { budget: 3000 });
-    await addProduct(sessionId, "TEE-BLACK-001");
+    await addProduct(sessionId, "red-sports-tee");
     const cart = await getCart(sessionId);
     const tooLow = Math.floor(cart.data.total / 100) - 1; // rupees, definitely below cart total
 
@@ -146,7 +146,7 @@ describe("Budget: clearing removes the cap entirely", () => {
     await setBudget(sessionId, { budget: 100 }); // ₹100 — too low for most items
     await setBudget(sessionId, { clear: true });
 
-    const res = await addProduct(sessionId, "TEE-BLACK-001", 5);
+    const res = await addProduct(sessionId, "red-sports-tee", 5);
     // Should succeed on stock alone now that budget is cleared — not
     // rejected for exceeding a budget that no longer exists.
     expect(res.success).toBe(true);
@@ -163,11 +163,12 @@ describe("Budget: session-scoped, never account-scoped", () => {
     const rowB: any = await env.DB.prepare("SELECT budget_paise FROM sessions WHERE id = ?").bind(sessionB).first();
     expect(rowB.budget_paise).toBeNull();
 
-    // Confirms nothing budget-related ever landed on the account itself.
-    const prefs: any = await env.DB.prepare("SELECT budget_preference FROM user_preferences WHERE user_id = ?")
-      .bind(email)
-      .first();
-    expect(prefs?.budget_preference ?? null).toBeNull();
+    // Confirms nothing budget-related ever landed on the account itself —
+    // user_preferences has no budget column at all (an earlier
+    // budget_preference column was removed as dead schema; it was always
+    // NULL since nothing ever wrote it), so there's nothing to leak to.
+    const columns: any[] = (await env.DB.prepare("PRAGMA table_info(user_preferences)").all()).results ?? [];
+    expect(columns.some((c: any) => c.name === "budget_preference")).toBe(false);
   });
 
   it("a fresh session for a signed-in-equivalent account starts uncapped even after a previous session set one", async () => {
