@@ -139,13 +139,82 @@ describe("Audit coverage: sign-in is no longer invisible", () => {
   });
 });
 
+describe("Audit feed: incremental 'since' cursor, and bounded without it", () => {
+  // Regression coverage for a real production slowdown: GET /api/audit
+  // had no row limit at all, and every 3-second poll re-fetched/re-parsed
+  // the session's ENTIRE history — for one long-lived real session this
+  // grew to ~4,000 rows, at which point every poll started exceeding the
+  // Worker's CPU time limit outright (taking other in-flight requests
+  // down with it). The fix: a row cap on the no-cursor path, plus an
+  // incremental `since` path so a normal repeated poll only ever asks for
+  // what's NEW, not the whole recent batch again.
+  async function getAudit(sessionId: string, since?: number) {
+    const url = since
+      ? `https://test/api/audit?session_id=${sessionId}&since=${since}`
+      : `https://test/api/audit?session_id=${sessionId}`;
+    const res = await SELF.fetch(url, { headers: { "x-session-id": sessionId } });
+    return (await res.json()) as any;
+  }
+
+  it("without a cursor, returns events but never more than the row cap", async () => {
+    const sessionId = await startSession();
+    for (let i = 0; i < 5; i++) {
+      await SELF.fetch("https://test/api/catalog?q=tee", { headers: { "x-session-id": sessionId } });
+    }
+    const data = await getAudit(sessionId);
+    expect(data.success).toBe(true);
+    expect(Array.isArray(data.data.events)).toBe(true);
+    expect(data.data.events.length).toBeLessThanOrEqual(60);
+  });
+
+  it("with a `since` cursor set to now, a quiet session returns an empty events array, not an error", async () => {
+    const sessionId = await startSession();
+    const data = await getAudit(sessionId, Date.now());
+    expect(data.success).toBe(true);
+    expect(data.data.events).toEqual([]);
+  });
+
+  it("with a `since` cursor before a real event, that event comes back — the incremental path actually finds new rows", async () => {
+    const sessionId = await startSession();
+    const before = Date.now() - 1000;
+    await SELF.fetch("https://test/api/catalog?q=jacket", { headers: { "x-session-id": sessionId } });
+
+    const data = await getAudit(sessionId, before);
+    expect(data.success).toBe(true);
+    expect(data.data.events.some((e: any) => e.endpoint === "/api/catalog")).toBe(true);
+  });
+
+  it("with a `since` cursor AFTER a real event, that event is correctly excluded", async () => {
+    const sessionId = await startSession();
+    await SELF.fetch("https://test/api/catalog?q=shirt", { headers: { "x-session-id": sessionId } });
+    await new Promise((r) => setTimeout(r, 5));
+    const after = Date.now();
+
+    const data = await getAudit(sessionId, after);
+    expect(data.success).toBe(true);
+    expect(data.data.events.some((e: any) => e.endpoint === "/api/catalog")).toBe(false);
+  });
+
+  it("a garbage `since` value is treated the same as no cursor at all, not an error", async () => {
+    const sessionId = await startSession();
+    await SELF.fetch("https://test/api/catalog?q=bag", { headers: { "x-session-id": sessionId } });
+
+    const res = await SELF.fetch(`https://test/api/audit?session_id=${sessionId}&since=not-a-number`, {
+      headers: { "x-session-id": sessionId },
+    });
+    const data: any = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.data.events.some((e: any) => e.endpoint === "/api/catalog")).toBe(true);
+  });
+});
+
 describe("Audit coverage: gated cart proposals are distinguishable from mutations", () => {
   it("propose-add logs separately from the eventual confirm-triggered add", async () => {
     const sessionId = await startSession();
     const proposeRes = await SELF.fetch("https://test/api/cart/propose-add", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-session-id": sessionId },
-      body: JSON.stringify({ product_id: "TEE-BLACK-001", quantity: 1 }),
+      body: JSON.stringify({ product_id: "red-sports-tee", quantity: 1 }),
     });
     const proposeData: any = await proposeRes.json();
     expect(proposeData.success).toBe(true);

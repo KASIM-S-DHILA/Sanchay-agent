@@ -10,6 +10,8 @@ import { VoiceDock } from "./components/VoiceDock";
 import { useAuditFeed } from "./hooks/useAuditFeed";
 import { useAuth } from "./hooks/useAuth";
 import { useGeminiLive } from "./hooks/useGeminiLive";
+import { useProductWindows } from "./hooks/useProductWindows";
+import { ProductDetailWindows } from "./components/ProductDetailWindows";
 import { RAZORPAY_KEY_ID, rupees } from "./config";
 
 interface CartData {
@@ -25,6 +27,13 @@ interface CartData {
     expiresInSeconds: number;
     lastAttemptFailed: boolean;
   } | null;
+  // Set server-side from sessions.user_id (see getCart in src/api/logic.ts)
+  // — false for guest browsing, true only after a real sign-in. Used to
+  // gate the Pay button: checkout is rejected server-side for a guest
+  // regardless of what the UI shows, but showing that as a disabled button
+  // with an explanation is far better than letting them click Pay and
+  // learn about the requirement from a surprise error.
+  isSignedIn?: boolean;
 }
 
 interface Note {
@@ -223,21 +232,16 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // — Cart ———————————————————————————————————————————————————————————
+  // — Tab visibility ————————————————————————————————————————————————
+  // Feeds the polling gate below: a backgrounded tab can't show a
+  // shopper anything anyway, so there's no reason to keep asking the
+  // backend for updates while it's hidden.
+  const [tabVisible, setTabVisible] = useState(() => document.visibilityState === "visible");
   useEffect(() => {
-    if (!sessionId) return;
-    let cancelled = false;
-    const load = async () => {
-      const data = await api("/api/cart");
-      if (!cancelled && data?.success) setCart(data.data);
-    };
-    void load();
-    const timer = setInterval(load, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [sessionId, api]);
+    const onVisibility = () => setTabVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   const refreshCart = useCallback(async () => {
     const data = await api("/api/cart");
@@ -341,6 +345,30 @@ export default function App() {
     if (payment && payment.stage !== "paid") openRazorpay(payment.orderId, payment.amount);
   }, [payment, openRazorpay]);
 
+  /**
+   * Voice-triggered checkout completion — deliberately does NOT call
+   * openRazorpay directly. Razorpay's checkout modal can be silently
+   * blocked by the browser when opened from code that isn't running
+   * inside a real user gesture (a click/tap), and a Gemini Live tool-call
+   * callback fires from a WebSocket message handler — there is no click
+   * behind it, no matter how "immediate" it feels in the conversation.
+   * That's exactly the bug this fixes: checkout "worked" (a real order
+   * was created — this callback fired), but rzp.open() never visibly
+   * appeared, and only opened once the shopper did something with a real
+   * gesture afterward (clicking Pay/Resume manually).
+   *
+   * Instead, this primes the SAME "Resume payment" UI a dismissed-modal
+   * checkout already shows (see Bill.tsx's `awaiting` branch) — one real
+   * tap on that button is real gesture and opens cleanly. The agent is
+   * told out loud to say so (see the tool description), so the shopper
+   * isn't left wondering why nothing happened.
+   */
+  const primeVoiceCheckout = useCallback((orderId: string, amountPaise: number) => {
+    setPayment((prev) =>
+      prev && prev.orderId === orderId && prev.stage === "paid" ? prev : { orderId, amount: amountPaise, stage: "dismissed" },
+    );
+  }, []);
+
   // — Auth ————————————————————————————————————————————————————————————
   // A session is opened first if none exists yet, so signing in before ever
   // talking or shopping still has something to attach to. The backend
@@ -383,12 +411,64 @@ export default function App() {
     }
   }, [api, ensureSession, note, openRazorpay, refreshCart]);
 
+  // — Floating product-detail windows — single source of truth shared by
+  // voice tool calls (show_product_detail etc., wired into useGeminiLive
+  // below) and manual clicks (the X button, "Add" inside a window).
+  // Auto-closes whenever sessionId changes (sign-in/sign-out), see the
+  // hook's own effect.
+  const productWindows = useProductWindows(sessionId, api);
+
   // — Voice — Gemini Live (ephemeral token + 16k→24k PCM + tool calling).
   // App.tsx is the ONLY owner of session identity — the hook takes a
   // session id as a plain argument to startCall and never creates, caches,
   // or hands one back. No "adopt session" reconciliation needed: there is
   // only ever one copy of the session id to begin with.
-  const voice = useGeminiLive(openRazorpay as any);
+  const voice = useGeminiLive(primeVoiceCheckout, productWindows);
+
+  // Whether it's worth polling at all right now: only while a call is
+  // actually live (idle means nothing but the shopper's own manual
+  // clicks — which already update state directly — can change anything)
+  // AND the tab is visible (a hidden tab can't show updates anyway). This
+  // is the fix for the CPU-limit incident where one tab left open with no
+  // call running polled /api/cart and /api/audit every 3s indefinitely.
+  const pollingActive = voice.callState !== "idle" && tabVisible;
+
+  // — Cart ———————————————————————————————————————————————————————————
+  useEffect(() => {
+    if (!sessionId || !pollingActive) return;
+    let cancelled = false;
+    const load = async () => {
+      const data = await api("/api/cart");
+      if (!cancelled && data?.success) setCart(data.data);
+    };
+    void load(); // catch up immediately whenever polling turns back on
+    const timer = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [sessionId, api, pollingActive]);
+
+  // Keeps the voice hook's own copy of the bearer token in sync with
+  // auth.token on every change (sign-in, sign-out, or a token refresh) —
+  // without this, a shopper who signs in mid-call still has every
+  // voice-triggered request (checkout especially) go out with no
+  // Authorization header, so the agent reports "you're not signed in"
+  // even though they just did.
+  useEffect(() => {
+    voice.setAuthToken(auth.token);
+  }, [auth.token, voice.setAuthToken]);
+
+  // Same reasoning as the auth-token sync above, for session id: signing
+  // in mid-call reattaches to a different session (see handleAuthOtpVerify
+  // resuming an existing session rather than always keeping the caller's
+  // current one) — without this, an already-live voice call kept issuing
+  // every subsequent tool call (checkout, check_payment_status, etc.)
+  // against the OLD session id, which the server now considers unrelated
+  // to the shopper's actual signed-in identity.
+  useEffect(() => {
+    voice.setActiveSessionId(sessionId);
+  }, [sessionId, voice.setActiveSessionId]);
 
   // Sign-out has to end the session server-side too, not just drop the
   // token — otherwise the shopper keeps talking/shopping on the exact same
@@ -429,6 +509,13 @@ export default function App() {
           setJustAddedId(productId);
           if (justAddedTimerRef.current) clearTimeout(justAddedTimerRef.current);
           justAddedTimerRef.current = setTimeout(() => setJustAddedId(null), 2600);
+          // A floating detail window for this exact product has now done
+          // its job — decided — so it closes itself rather than sitting
+          // open next to a bill that already reflects the decision. Any
+          // OTHER open windows are left untouched — see the matching
+          // add_to_cart dispatch in useGeminiLive.ts for why those are
+          // surfaced to the agent as a question, not auto-closed too.
+          productWindows.closeProduct(productId);
         } else {
           note(data?.error ?? "Couldn't add that to the bill.", "warn");
         }
@@ -436,7 +523,7 @@ export default function App() {
         setAddingProductId(null);
       }
     },
-    [api, ensureSession, note],
+    [api, ensureSession, note, productWindows],
   );
 
   const handleClearBudget = useCallback(async (): Promise<boolean> => {
@@ -475,10 +562,18 @@ export default function App() {
   );
 
   // — Audit feed: one poller, several consumers ————————————————————————
-  const { events } = useAuditFeed(sessionId);
+  const { events, loaded: auditFeedLoaded } = useAuditFeed(sessionId, pollingActive);
 
   useEffect(() => {
-    // First poll after a (re)load / session switch: the feed already
+    // Wait for the FIRST real fetch to resolve before deciding anything is
+    // "history" — events is [] both before that fetch and for a genuinely
+    // empty new session, and reacting to the pre-fetch [] used to consume
+    // this one-time guard on nothing, letting the real first batch (the
+    // session's actual full history) get treated as brand new instead —
+    // which is exactly what reopened the Razorpay modal for an
+    // already-paid order after a reload.
+    if (!auditFeedLoaded) return;
+    // First real poll after a (re)load / session switch: the feed already
     // contains this session's whole history. Mark it all handled without
     // acting on any of it — only events arriving on a poll AFTER this one
     // are new enough to react to (e.g. auto-opening the Razorpay modal).
@@ -517,7 +612,7 @@ export default function App() {
         setShelfError(null);
       }
     }
-  }, [events, openRazorpay, sessionId]);
+  }, [events, openRazorpay, sessionId, auditFeedLoaded]);
 
   const items = cart?.items ?? [];
   const total = cart?.total ?? 0;
@@ -591,8 +686,11 @@ export default function App() {
             error={voice.error}
             micLevel={voice.micLevel}
             agentLevel={voice.agentLevel}
+            isPaused={voice.isPaused}
             onStart={() => void startTalking()}
             onStop={voice.stopCall}
+            onPause={voice.pauseCall}
+            onResume={voice.resumeCall}
             onDismissError={voice.dismissError}
             onTry={(q) => void searchShelf(q)}
           />
@@ -651,6 +749,7 @@ export default function App() {
             budgetRemaining={budgetRemaining}
             payment={payment}
             pendingOrder={cart?.pendingOrder ?? null}
+            isSignedIn={cart?.isSignedIn}
             busy={checkoutBusy}
             email={email}
             onEmailChange={setEmail}
@@ -662,6 +761,20 @@ export default function App() {
           {sessionId && <ActivityLog events={events} />}
         </aside>
       </main>
+
+      <ProductDetailWindows
+        windows={productWindows.windows}
+        onClose={productWindows.closeProduct}
+        onCloseAll={productWindows.closeAll}
+        onFocus={productWindows.bringToFront}
+        onAdd={(id) => void handleAddToCart(id)}
+        addingId={addingProductId}
+        justAddedId={justAddedId}
+        isCallLive={voice.callState === "listening" || voice.callState === "speaking"}
+        isPaused={voice.isPaused}
+        onPause={voice.pauseCall}
+        onResume={voice.resumeCall}
+      />
 
       {notes.length > 0 && (
         <div className="notes" aria-live="polite">

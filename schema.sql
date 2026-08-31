@@ -75,25 +75,18 @@ CREATE TABLE IF NOT EXISTS orders (
   -- order 'attempted' (not 'cancelled', so a retry can reuse it) rather
   -- than 'cancelled', so without this flag a later expiry pass would see
   -- that still-'attempted' order and credit its stock back a second time.
-  stock_released INTEGER DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS intent_mandates (
-  id TEXT PRIMARY KEY,
-  session_id TEXT,
-  jwt TEXT,
-  budget_value INTEGER,
-  span TEXT,
-  created_at TEXT,
-  expires_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS cart_mandates (
-  id TEXT PRIMARY KEY,
-  session_id TEXT,
-  jwt TEXT,
-  cart_hash TEXT,
-  created_at TEXT
+  stock_released INTEGER DEFAULT 0,
+  -- Set the instant this order's items are removed from cart_items (see
+  -- clearPaidItemsFromCart / reconcilePaidOrders in api/logic.ts) — guards
+  -- against reconcilePaidOrders re-clearing the SAME order's items forever.
+  -- Without this, reconcilePaidOrders re-scanned every paid order on every
+  -- single cart read with no memory of having already cleared it, so
+  -- adding the SAME product again later (a completely normal repeat
+  -- purchase) got silently deleted the instant that read's reconciliation
+  -- pass ran — the add itself succeeded, but the very next cart read (the
+  -- add's own response) wiped it, making it look like add_to_cart was
+  -- simply broken.
+  cart_cleared INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -107,19 +100,14 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   created_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS notifications (
-  id TEXT PRIMARY KEY,
-  session_id TEXT,
-  type TEXT,
-  payload_json TEXT,
-  created_at TEXT
-);
-
+-- preferred_categories and budget_preference columns existed here
+-- previously but had no writer anywhere in the codebase (always empty/
+-- NULL) and were dropped as dead schema — see the removal note in
+-- api/logic.ts's setBudget/getAccountProfile comments for what actually
+-- serves those signals now.
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id TEXT PRIMARY KEY,
   name TEXT,
-  preferred_categories TEXT,
-  budget_preference INTEGER,
   previous_products TEXT,
   purchase_history TEXT,
   session_count INTEGER DEFAULT 0,
@@ -160,18 +148,18 @@ CREATE TABLE IF NOT EXISTS api_call_log (
 
 CREATE INDEX IF NOT EXISTS idx_api_log_session ON api_call_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_api_log_ts ON api_call_log(created_at);
-
-CREATE TABLE IF NOT EXISTS user_preferences (
-  user_id TEXT PRIMARY KEY,
-  name TEXT,
-  preferred_categories TEXT,
-  budget_preference INTEGER,
-  previous_products TEXT,
-  purchase_history TEXT,
-  session_count INTEGER DEFAULT 0,
-  last_active TEXT,
-  updated_at TEXT
-);
+-- handleAudit's query (WHERE session_id = ? ORDER BY created_at DESC LIMIT
+-- ?) is polled every 3 seconds by every active session for as long as its
+-- tab stays open — with only the single-column indexes above, SQLite can
+-- use ONE of them for the WHERE filter but still has to sort every
+-- matching row by created_at afterward, which for a long-lived session
+-- (thousands of rows accumulated over an extended session) measured in
+-- the ~900ms average / ~7.8s worst case on every single poll — a real,
+-- observed production slowdown, not a theoretical one. This compound
+-- index lets the same query satisfy the filter AND the ordering from the
+-- index directly, with no separate sort step, regardless of how many rows
+-- that session has accumulated.
+CREATE INDEX IF NOT EXISTS idx_api_log_session_ts ON api_call_log(session_id, created_at DESC);
 
 -- Idempotency replay store for cart/add (and future mutating endpoints).
 -- A retry with the same (session_id, endpoint, idempotency_key) replays the
@@ -238,3 +226,27 @@ CREATE TABLE IF NOT EXISTS pending_actions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_actions_session ON pending_actions(session_id);
+
+-- "Seen" products — a floating product-detail window that stayed open at
+-- least MIN_DWELL_MS (see logViewedProduct in api/logic.ts) logs a row
+-- here. Deliberately session_id-scoped, not user_id-scoped: exactly like
+-- cart_items and orders, this makes sign-in migration free (see
+-- migrateGuestSessionToUser in api/userMigration.ts, which only ever
+-- repoints sessions.user_id — nothing here needs its own merge step,
+-- unlike user_preferences's array-merge). getViewedProducts joins through
+-- sessions.user_id at query time, the same pattern getPurchaseHistory uses
+-- for orders.
+--
+-- One row per (session, product) — reopening something already seen this
+-- session just bumps last_viewed_at rather than accumulating duplicate
+-- rows, so "recently seen" reflects genuine recency, not repeat-view noise.
+CREATE TABLE IF NOT EXISTS viewed_products (
+  session_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  first_viewed_at TEXT NOT NULL,
+  last_viewed_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_viewed_products_session ON viewed_products(session_id, last_viewed_at);

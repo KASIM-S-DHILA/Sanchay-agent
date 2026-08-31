@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { TranscriptEntry } from "../hooks/useVoiceCall";
+import type { Transcript as TranscriptEntry } from "../hooks/useGeminiLive";
 
 type CallState = "idle" | "connecting" | "listening" | "speaking";
 
@@ -28,8 +28,11 @@ export function VoiceDock({
   error,
   micLevel,
   agentLevel,
+  isPaused,
   onStart,
   onStop,
+  onPause,
+  onResume,
   onDismissError,
   onTry,
 }: {
@@ -38,8 +41,11 @@ export function VoiceDock({
   error: string | null;
   micLevel: number;
   agentLevel: number;
+  isPaused: boolean;
   onStart: () => void;
   onStop: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onDismissError: () => void;
   onTry: (query: string) => void;
 }) {
@@ -59,24 +65,42 @@ export function VoiceDock({
       <div className="dock-main">
         {live ? (
           <>
-            <button type="button" className="talk-btn is-live" onClick={onStop}>
+            <button
+              type="button"
+              className={`talk-btn is-live ${isPaused ? "is-paused" : ""}`}
+              onClick={isPaused ? onResume : onStop}
+            >
               <span className="talk-dot" aria-hidden />
-              {speaking ? "Sanchay is talking" : "Listening"}
+              {isPaused ? "Paused — tap to resume" : speaking ? "Sanchay is talking" : "Listening"}
             </button>
-            <Meter level={speaking ? agentLevel : micLevel} tone={speaking ? "agent" : "mic"} />
+            <Meter level={isPaused ? 0 : speaking ? agentLevel : micLevel} tone={speaking ? "agent" : "mic"} />
             <div className="dock-state">
               <span className="dock-state-label is-live">
-                {speaking ? "Hold on — hear him out" : "Go ahead, speak"}
+                {isPaused ? "Mic is off — nothing is being heard" : speaking ? "Hold on — hear him out" : "Go ahead, speak"}
               </span>
               <span className="dock-hint">
-                {speaking
-                  ? "Cut in any time; he'll stop."
-                  : "Ask for something, or say “checkout” when the bill looks right."}
+                {isPaused
+                  ? "Resume when you're ready to keep talking."
+                  : speaking
+                    ? "Cut in any time; he'll stop."
+                    : "Ask for something, or say “checkout” when the bill looks right."}
               </span>
             </div>
-            <button type="button" className="btn btn-sm dock-end" onClick={onStop}>
-              End call
-            </button>
+            <div className="dock-actions">
+              {/* Pausing only stops the mic — the call stays open, so
+                  resuming picks the SAME conversation back up (cart, name,
+                  everything already said) rather than starting over. */}
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={isPaused ? onResume : onPause}
+              >
+                {isPaused ? "Resume" : "Pause"}
+              </button>
+              <button type="button" className="btn btn-sm dock-end" onClick={onStop}>
+                End call
+              </button>
+            </div>
           </>
         ) : callState === "connecting" ? (
           <>
@@ -106,7 +130,15 @@ export function VoiceDock({
       {/* Announce state changes for screen readers without duplicating them
           visually — the button label above already carries it. */}
       <span className="sr-only" role="status" aria-live="polite">
-        {live ? (speaking ? "Sanchay is speaking" : "Listening") : callState === "connecting" ? "Connecting" : "Call ended"}
+        {live
+          ? isPaused
+            ? "Paused"
+            : speaking
+              ? "Sanchay is speaking"
+              : "Listening"
+          : callState === "connecting"
+            ? "Connecting"
+            : "Call ended"}
       </span>
 
       {error && (

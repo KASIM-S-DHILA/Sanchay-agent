@@ -18,7 +18,7 @@ const sanchayTools = [
       },
       {
         name: "add_to_cart",
-        description: "Add exact catalog id to cart. 1-99 qty.",
+        description: "Add exact catalog id to cart. 1-99 qty. If this product had a floating detail window open, it closes automatically once added. If the result includes remainingOpenWindows (other products still open in their own windows), ask the shopper what they want to do with those — add them too, or close them — never silently leave them open with no mention, and never close them yourself without being told to.",
         parameters: { type: "object", properties: { product_id: { type: "string" }, quantity: { type: "integer" } }, required: ["product_id"] },
       },
       {
@@ -27,13 +27,57 @@ const sanchayTools = [
         parameters: { type: "object", properties: { product_id: { type: "string" }, quantity: { type: "integer" } }, required: ["product_id"] },
       },
       { name: "get_cart", description: "Get cart summary.", parameters: { type: "object", properties: {}, required: [] } },
-      { name: "checkout", description: "Create Razorpay order.", parameters: { type: "object", properties: {}, required: [] } },
-      { name: "get_order_status", description: "Check order.", parameters: { type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] } },
+      {
+        name: "checkout",
+        description:
+          "Creates the Razorpay order for the current cart. IMPORTANT: this does NOT open the payment window itself — browsers block a payment popup triggered by voice/code with no real click behind it, so after this succeeds you must tell the shopper the order is ready and ask them to tap the 'Resume payment' button that appears on screen to open it. Never claim the payment window has opened, is open, or is loading — it is not, and won't be until they tap that button themselves.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      { name: "get_order_status", description: "Look up ONE specific order by its exact order_id — only useful if the shopper already has that id in hand (e.g. from an email or receipt), which is rare; never ask them to recall or read out an order id themselves. For 'did I pay', 'what have I bought', 'show my order history', or anything about past orders in general, use check_account_profile instead — it lists their recent orders with no id needed.", parameters: { type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] } },
+      {
+        name: "check_account_profile",
+        description:
+          "Get the signed-in shopper's own account profile: name, email, member-since date, lifetime order count and total spend, favorite categories (derived from what they've actually bought), and up to 10 recent paid orders — no order_id needed. This is the RIGHT tool for 'did my payment go through', 'have I paid before', 'what have I bought', 'show my order history', or any question about past orders in general — do NOT ask the shopper for an order id or reach for get_order_status for these; almost nobody remembers an order id, and this tool needs none. Call this ONLY when they explicitly ask about their history, spending, past orders, or preferences — never volunteer this unprompted, and never recite the full order list back unless they ask for detail; a short natural mention is enough. Also useful silently: if they're browsing and favoriteCategories suggests a strong pattern (e.g. mostly jackets), you may lean the search_catalog query toward that when it's ambiguous what they want — but never state you're doing this or that you're 'checking their data' for a plain product search. Requires sign-in; if not signed in, it returns success:false and you should ask them to sign in first.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
       {
         name: "check_payment_status",
         description:
-          "Check whether the shopper has a payment currently in progress (created a Razorpay order but hasn't finished paying yet). Call this if they ask 'is my payment pending', 'did my payment go through', 'how much time do I have left to pay', or similar — do NOT call checkout again just to answer this. Returns whether one exists, how much is due, how many seconds remain before the reservation expires, and whether their last attempt failed.",
+          "Check the status of the shopper's MOST RECENT single checkout — whether it's currently pending, already succeeded, or expired. Call this for 'is my payment pending', 'did THAT payment go through', 'how much time do I have left to pay', right after a checkout — do NOT call checkout again just to answer this. For questions about order history in general ('what have I bought', 'show my past orders', 'have I paid before' with no specific recent checkout in mind), use check_account_profile instead. If hasPendingPayment is true: a payment is in progress — amountDue/expiresInSeconds/lastAttemptFailed describe it. If hasPendingPayment is false: check alreadyPaid — true means their most recent order was successfully paid (tell them so, do not say the payment failed), false with expired:true means their last reservation ran out unpaid (offer to check out again), false with neither set means they haven't checked out at all yet.",
         parameters: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "show_product_detail",
+        description:
+          "Opens a bigger, more detailed floating window for one or more products the shopper wants a closer look at — e.g. 'show me that one', 'let me see the blue jacket bigger', or after they pick something to compare. Pass exact product ids from a recent search_catalog result, never invented ones. Up to 4 windows can be open at once; reopening something already open just brings it to the front, never a duplicate or an error. If the cap is already full, the result's skippedAtCap lists what couldn't open and openProductNames lists everything currently open — tell the shopper what's open and ask them to either pick one of those or close something first (say 'close the first one' etc.), never just silently retry.",
+        parameters: {
+          type: "object",
+          properties: { product_ids: { type: "array", items: { type: "string" } } },
+          required: ["product_ids"],
+        },
+      },
+      {
+        name: "close_product_detail",
+        description: "Closes ONE specific open product-detail window, leaving any others exactly as they are. Use when the shopper says 'close that one' / 'close the jacket' while others may still be open — never use this to close everything. Pass the EXACT product_id from when that window was opened (the ids you used in your own show_product_detail call). If the shopper wants MULTIPLE windows closed, call this once per window with its own exact id, one call per product — never guess an id you're unsure of. On failure the result includes exactly which ids are still open right now — if you're not certain which one the shopper means, ask them rather than guessing, since a wrong id either closes nothing (and tells you so) or closes the wrong window.",
+        parameters: { type: "object", properties: { product_id: { type: "string" } }, required: ["product_id"] },
+      },
+      {
+        name: "close_all_product_details",
+        description: "Closes every open product-detail window at once and returns to the plain shelf view. Use for 'close all of these', 'go back to the counter', 'hide those windows' — not for closing just one.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "describe_product_images",
+        description:
+          "Look at a product's actual photo(s) and describe or answer a question about what's visibly in them (color, material, pattern, details like buttons/collar/pockets) — call this for 'what does it look like', 'does it have a collar', 'which one is darker', or similar visual questions. Omit product_ids to describe whatever detail window(s) are CURRENTLY OPEN on screen (the normal case — the shopper is already looking at it, so don't ask them to repeat an id). Only pass explicit product_ids when nothing is open yet, e.g. describing something straight from search results. Pass `question` with their exact visual question when they asked one, so the answer is specific rather than a generic description. Fails clearly if nothing is open and no ids were given — in that case, ask what they'd like to see, or search/open something first.",
+        parameters: {
+          type: "object",
+          properties: {
+            product_ids: { type: "array", items: { type: "string" } },
+            question: { type: "string" },
+          },
+          required: [],
+        },
       },
       { name: "save_user_name", description: "Save or correct shopper's first name. Call once when asked, or again only if they explicitly correct it.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
       {
@@ -53,10 +97,24 @@ const sanchayTools = [
   },
 ];
 
-async function sanchayFetch(path: string, sessionId: string, body: Record<string, unknown> = {}) {
+async function sanchayFetch(
+  path: string,
+  sessionId: string,
+  body: Record<string, unknown> = {},
+  authToken?: string | null,
+) {
   const r = await fetch(`${SANCHAY_BASE}${path}`, {
     method: "POST",
-    headers: { "x-session-id": sessionId, "Content-Type": "application/json" },
+    headers: {
+      "x-session-id": sessionId,
+      "Content-Type": "application/json",
+      // Without this, every voice-triggered call (checkout in particular)
+      // looked identical to a guest request server-side — handleCheckout
+      // requires a verified bearer token, not just sessions.user_id, so a
+      // genuinely signed-in shopper asking the agent to check out was
+      // rejected with "sign in first" even though they already had.
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
     body: JSON.stringify(body),
   });
   return (await r.json()) as Record<string, unknown>;
@@ -114,6 +172,35 @@ async function fetchHistorySummary(sessionId: string): Promise<string | null> {
 }
 
 /**
+ * Same idea as fetchHistorySummary, but for products the shopper LOOKED AT
+ * (via a floating detail window that stayed open past the dwell debounce —
+ * see logViewedProduct in src/api/logic.ts) without buying. Meaningful even
+ * for a returning guest session (viewed_products is session_id-scoped, not
+ * account-scoped) — e.g. sign-in resumes the SAME session on a later call
+ * (see handleAuthOtpVerify), so this can carry real signal across calls
+ * even without an account. Never volunteer this unprompted, same rule as
+ * the purchase-history line — it's a "shopkeeper who remembers what you
+ * looked at" cue for a natural pitch-back, not a recitation.
+ */
+async function fetchViewedSummary(sessionId: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${SANCHAY_BASE}/api/viewed-products`, {
+      method: "GET",
+      headers: { "x-session-id": sessionId },
+    });
+    const j: any = await r.json();
+    if (!j?.success) return null;
+    const viewed: { name: string }[] = j.data?.viewed ?? [];
+    if (!Array.isArray(viewed) || viewed.length === 0) return null;
+    const names = viewed.map((v) => v.name).filter(Boolean).slice(0, 4);
+    if (names.length === 0) return null;
+    return `Earlier this visit they looked closely at: ${names.join(", ")} (without buying yet).`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Session ownership: this hook holds NO session state of its own. Earlier
  * versions kept an internal `sanchaySidRef` that was independently seeded
  * from a `sessionId` prop, occasionally minted its OWN session when empty,
@@ -128,8 +215,43 @@ async function fetchHistorySummary(sessionId: string): Promise<string | null> {
  * call starts, cleared when it stops, never persisted or reused across
  * calls, never independently fetched or created.
  */
-export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: number) => void) {
+export interface ProductWindowsController {
+  openProducts: (products: { productId: string; name: string; description: string; price: number; price_display: string; category: string; stock: number; image_url: string | null }[]) => { opened: string[]; skippedAtCap: string[]; openProductNames: string[] };
+  closeProduct: (productId: string) => string | null;
+  closeAll: () => void;
+  setVisionDescription: (productId: string, text: string) => void;
+  getOpenProductIds: () => string[];
+}
+
+export function useGeminiLive(
+  onCheckoutSuccess?: (orderId: string, amount: number) => void,
+  productWindows?: ProductWindowsController,
+) {
+  // Read via a ref, not a direct closure dependency — App.tsx's
+  // useProductWindows() returns a fresh object each render (its individual
+  // functions are useCallback-stabilized, but the containing object isn't),
+  // and handleTool below is itself memoized; depending on the object
+  // directly would either recreate handleTool every render or, worse, let
+  // handleTool silently close over a stale productWindows from whenever it
+  // was last recreated. Same pattern as authTokenRef.
+  const productWindowsRef = useRef<ProductWindowsController | undefined>(productWindows);
+  productWindowsRef.current = productWindows;
   const [callState, setCallState] = useState<CallState>("idle");
+  // True while the mic is deliberately held (shopper tapped Pause) — the
+  // WebSocket connection and all session context (cart, name, everything
+  // already discussed) stay fully intact; only the outgoing audio stream
+  // stops. See pauseCall/resumeCall below.
+  const [isPaused, setIsPaused] = useState(false);
+  const pausedRef = useRef(false);
+  /** The bearer token for whoever is signed in right now, if anyone — read
+   *  by handleTool on every tool call so voice-triggered requests (checkout
+   *  especially) carry the same proof of sign-in the browser's own fetches
+   *  do. Updated live via setAuthToken (exposed below), NOT tied to
+   *  call start/stop, since a shopper can sign in or out mid-call. */
+  const authTokenRef = useRef<string | null>(null);
+  const setAuthToken = useCallback((token: string | null) => {
+    authTokenRef.current = token;
+  }, []);
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [micLevel, setMicLevel] = useState(0);
@@ -143,8 +265,31 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
 
   const sessionRef = useRef<any>(null);
   /** The session id THIS call is using — set at the top of startCall, read
-   *  by handleTool/fetchKnownName, cleared by stopCall. Never anything else. */
+   *  by handleTool/fetchKnownName, cleared by stopCall. Also kept in sync
+   *  mid-call via setActiveSessionId (see below) — see that comment for
+   *  why a call already in progress must not keep using a session id
+   *  App.tsx has since moved past (e.g. sign-in reattaching to a
+   *  different session while the shopper is still talking). */
   const activeSessionIdRef = useRef<string | null>(null);
+  /**
+   * Keeps activeSessionIdRef in sync with whatever session id App.tsx is
+   * currently using, for the DURATION of an already-live call — not just
+   * the value startCall was invoked with.
+   *
+   * Without this, signing in mid-call (a completely normal flow: ask to
+   * check out, get told to sign in, sign in without ending the call, ask
+   * to check out again) left every subsequent tool call in that same call
+   * still targeting the OLD session id — checkout and check_payment_status
+   * kept getting rejected against a session that, from the server's point
+   * of view, the shopper had already moved on from, no matter what
+   * auth.token said. The shopper sees this as "the agent says I'm not
+   * signed in / can't check my payment, even though I clearly signed in
+   * and paid" — exactly because the voice layer never learned the app had
+   * switched sessions underneath it.
+   */
+  const setActiveSessionId = useCallback((sessionId: string | null) => {
+    activeSessionIdRef.current = sessionId;
+  }, []);
   /** Whether the most recent transcript entry for this role is still being
    *  appended to (true) or is a finished turn (false) — see
    *  appendTranscriptDelta. Reset on start/stop so a leftover "open" turn
@@ -337,29 +482,70 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
       session.sendToolResponse({ functionResponses: res });
       return;
     }
+    const authToken = authTokenRef.current;
     for (const fc of toolCall.functionCalls ?? []) {
       let out: any = { success: false, error: "unknown" };
       try {
-        if (fc.name === "search_catalog") out = await sanchayFetch("/api/catalog", sid, { q: String(fc.args?.query ?? ""), limit: Number(fc.args?.limit) || 5 });
-        else if (fc.name === "add_to_cart") out = await sanchayFetch("/api/cart/add", sid, { product_id: String(fc.args?.product_id), quantity: Number(fc.args?.quantity) || 1 });
+        if (fc.name === "search_catalog") out = await sanchayFetch("/api/catalog", sid, { q: String(fc.args?.query ?? ""), limit: Number(fc.args?.limit) || 5 }, authToken);
+        else if (fc.name === "add_to_cart") {
+          const productId = String(fc.args?.product_id ?? "");
+          out = await sanchayFetch("/api/cart/add", sid, { product_id: productId, quantity: Number(fc.args?.quantity) || 1 }, authToken);
+          const pw = productWindowsRef.current;
+          if ((out as any)?.success && pw) {
+            // A floating detail window for exactly this product has done
+            // its job (the shopper decided: add it) — close it rather than
+            // leaving it sitting open next to a bill that already reflects
+            // the decision. Any OTHER still-open windows are deliberately
+            // left alone but surfaced back to the model as
+            // remainingOpenWindows, so the agent can ask whether the
+            // shopper wants those added too or closed — never silently
+            // decide either way on their behalf.
+            pw.closeProduct(productId);
+            const remaining = pw.getOpenProductIds();
+            if (remaining.length > 0) {
+              (out as any).data = { ...(out as any).data, remainingOpenWindows: remaining };
+            }
+          }
+        }
         else if (fc.name === "remove_from_cart") {
           const b: any = { product_id: String(fc.args?.product_id) };
           if (fc.args?.quantity) b.quantity = Number(fc.args.quantity);
-          out = await sanchayFetch("/api/cart/remove", sid, b);
-        } else if (fc.name === "get_cart") out = await sanchayFetch("/api/cart", sid, {});
+          out = await sanchayFetch("/api/cart/remove", sid, b, authToken);
+        } else if (fc.name === "get_cart") out = await sanchayFetch("/api/cart", sid, {}, authToken);
         else if (fc.name === "checkout") {
-          out = await sanchayFetch("/api/checkout", sid, {});
+          out = await sanchayFetch("/api/checkout", sid, {}, authToken);
           const d: any = (out as any).data;
           if (d?.orderId && onCheckoutSuccess) onCheckoutSuccess(d.orderId, d.amount);
-        } else if (fc.name === "get_order_status") out = await sanchayFetch(`/api/order/${String(fc.args?.order_id)}`, sid, {});
+        } else if (fc.name === "get_order_status") out = await sanchayFetch(`/api/order/${String(fc.args?.order_id)}`, sid, {}, authToken);
+        else if (fc.name === "check_account_profile") {
+          // GET, not POST — sanchayFetch is POST-only, so this is a plain
+          // fetch with the same auth headers rather than reusing the helper.
+          const r = await fetch(`${SANCHAY_BASE}/api/account/profile`, {
+            headers: {
+              "x-session-id": sid,
+              ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            },
+          });
+          out = await r.json();
+        }
         else if (fc.name === "check_payment_status") {
-          // /api/cart already computes pendingOrder (see getPendingOrder in
-          // src/api/logic.ts) fresh on every read — reused here rather than
-          // adding a dedicated endpoint for the same data.
-          const cartOut: any = await sanchayFetch("/api/cart", sid, {});
+          // /api/cart already computes pendingOrder + lastOrder (see
+          // getPendingOrder/getMostRecentOrder in src/api/logic.ts) fresh
+          // on every read — reused here rather than adding a dedicated
+          // endpoint for the same data.
+          //
+          // pendingOrder alone is ambiguous: once a payment succeeds it
+          // correctly becomes null (nothing left to resume), but that
+          // reads identically to "never checked out" or "reservation
+          // expired" — with no further signal the model had no honest
+          // basis to answer "did I pay?" except "no", even right after a
+          // real successful payment. lastOrder (the most recent order of
+          // ANY status) resolves that.
+          const cartOut: any = await sanchayFetch("/api/cart", sid, {}, authToken);
           const pending = cartOut?.data?.pendingOrder ?? null;
-          out = pending
-            ? {
+          const lastOrder = cartOut?.data?.lastOrder ?? null;
+          if (pending) {
+            out = {
               success: true,
               data: {
                 hasPendingPayment: true,
@@ -367,19 +553,88 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
                 expiresInSeconds: pending.expiresInSeconds,
                 lastAttemptFailed: pending.lastAttemptFailed,
               },
+            };
+          } else if (lastOrder?.status === "paid") {
+            out = { success: true, data: { hasPendingPayment: false, alreadyPaid: true, amountPaid: lastOrder.amountPaise } };
+          } else if (lastOrder?.status === "cancelled") {
+            out = { success: true, data: { hasPendingPayment: false, alreadyPaid: false, expired: true } };
+          } else {
+            out = { success: true, data: { hasPendingPayment: false, alreadyPaid: false } };
+          }
+        }
+        else if (fc.name === "show_product_detail") {
+          const pw = productWindowsRef.current;
+          const rawIds = Array.isArray(fc.args?.product_ids) ? fc.args.product_ids.map((v: unknown) => String(v)) : [];
+          if (!pw) out = { success: false, error: "Product windows are unavailable right now." };
+          else if (rawIds.length === 0) out = { success: false, error: "product_ids is required — pass at least one exact id from a recent search." };
+          else {
+            const lookup: any = await sanchayFetch("/api/product-details", sid, { product_ids: rawIds }, authToken);
+            if (!lookup?.success) out = lookup;
+            else {
+              const { opened, skippedAtCap, openProductNames } = pw.openProducts(lookup.data.products);
+              out = {
+                success: true,
+                data: {
+                  opened,
+                  notFound: lookup.data.notFound,
+                  skippedAtCap,
+                  openProductNames,
+                  atCap: skippedAtCap.length > 0,
+                },
+              };
             }
-            : { success: true, data: { hasPendingPayment: false } };
+          }
+        } else if (fc.name === "close_product_detail") {
+          const pw = productWindowsRef.current;
+          const productId = String(fc.args?.product_id ?? "").trim();
+          if (!pw) out = { success: false, error: "Product windows are unavailable right now." };
+          else if (!productId) out = { success: false, error: "product_id is required." };
+          else {
+            const closedId = pw.closeProduct(productId);
+            out = closedId
+              ? { success: true, data: { closedProductId: closedId } }
+              : {
+                success: false,
+                error: `No open window matched "${productId}" — nothing was closed. Currently open: ${pw.getOpenProductIds().join(", ") || "none"}. Use one of those exact ids, or ask the shopper which one they mean if it's ambiguous.`,
+              };
+          }
+        } else if (fc.name === "close_all_product_details") {
+          const pw = productWindowsRef.current;
+          if (!pw) out = { success: false, error: "Product windows are unavailable right now." };
+          else {
+            pw.closeAll();
+            out = { success: true };
+          }
+        } else if (fc.name === "describe_product_images") {
+          const pw = productWindowsRef.current;
+          const explicitIds = Array.isArray(fc.args?.product_ids) ? fc.args.product_ids.map((v: unknown) => String(v)) : [];
+          const question = typeof fc.args?.question === "string" ? fc.args.question : undefined;
+          const idsToUse = explicitIds.length > 0 ? explicitIds : (pw?.getOpenProductIds() ?? []);
+          if (idsToUse.length === 0) {
+            out = { success: false, error: "Nothing to describe — no product ids were given and no product windows are open. Search for or open something first." };
+          } else {
+            out = await sanchayFetch("/api/describe-products", sid, { product_ids: idsToUse, question }, authToken);
+            const d: any = out;
+            // Thread the description into whichever open window(s) it was
+            // actually about, so the detail window itself shows it too —
+            // not just spoken aloud once and then gone.
+            if (d?.success && pw) {
+              for (const pid of d.data?.describedProductIds ?? []) {
+                pw.setVisionDescription(pid, d.data.description);
+              }
+            }
+          }
         }
         else if (fc.name === "save_user_name") {
           const nameArg = String(fc.args?.name ?? "").trim();
           out = nameArg
-            ? await sanchayFetch("/api/user/name", sid, { name: nameArg })
+            ? await sanchayFetch("/api/user/name", sid, { name: nameArg }, authToken)
             : { success: false, error: "save_user_name called with no name — ask the shopper for their name first" };
         } else if (fc.name === "set_budget") {
           const clear = fc.args?.clear === true;
           out = clear
-            ? await sanchayFetch("/api/session/budget", sid, { clear: true })
-            : await sanchayFetch("/api/session/budget", sid, { budget: Number(fc.args?.rupees) });
+            ? await sanchayFetch("/api/session/budget", sid, { clear: true }, authToken)
+            : await sanchayFetch("/api/session/budget", sid, { budget: Number(fc.args?.rupees) }, authToken);
         }
       } catch (e: any) { out = { success: false, error: String(e) }; }
       // Tool calls otherwise fail silently from the shopper's (and
@@ -397,6 +652,8 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
   const startCall = useCallback(async (sessionId: string) => {
     setError(null);
     hasGreetedRef.current = false;
+    pausedRef.current = false;
+    setIsPaused(false);
     setCallState("connecting");
     if (!sessionId) {
       // No silent no-op — a caller that starts a call with no session is a
@@ -430,16 +687,17 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
         if (!j.success) throw new Error(j.error);
         return j.data.token as string;
       })();
-      const [knownName, historySummary, token] = await Promise.all([
+      const [knownName, historySummary, viewedSummary, token] = await Promise.all([
         fetchKnownName(sessionId),
         fetchHistorySummary(sessionId),
+        fetchViewedSummary(sessionId),
         tokenPromise,
       ]);
       const greetInstruction = knownName
         ? `Greet now in Hindi as instructed, using the name ${knownName}.`
         : "Greet now in Hindi as instructed.";
       const toolsAndBudgetLine =
-        "Tools: search_catalog, add_to_cart, remove_from_cart, get_cart, checkout, get_order_status, check_payment_status, save_user_name, set_budget. Search first, speak price_display ₹, respect budget. If the shopper states or changes a spending cap out loud, call set_budget — a budget is only for THIS visit, never remembered for next time even if they're signed in, so never claim it will carry over. If they ask to remove a cap, call set_budget with clear=true. If they ask about a payment already in progress, call check_payment_status instead of checkout again — a checkout order is held for 15 minutes; after that it's released and a fresh checkout is needed.";
+        "Tools: search_catalog, add_to_cart, remove_from_cart, get_cart, checkout, get_order_status, check_payment_status, check_account_profile, show_product_detail, close_product_detail, close_all_product_details, describe_product_images, save_user_name, set_budget. Search first, speak price_display ₹, respect budget. If the shopper states or changes a spending cap out loud, call set_budget — a budget is only for THIS visit, never remembered for next time even if they're signed in, so never claim it will carry over. If they ask to remove a cap, call set_budget with clear=true. If they ask about a payment already in progress, call check_payment_status instead of checkout again — a checkout order is held for 15 minutes; after that it's released and a fresh checkout is needed. For 'did I pay before' / 'what have I bought' / order history in general, call check_account_profile — it needs no order id, so NEVER ask the shopper for an order id (almost nobody remembers one); only use get_order_status if they already volunteer a specific id themselves. Checkout requires being signed in — browsing and adding to cart work fine as a guest, but calling checkout will fail with success:false if they haven't signed in yet (get_cart's isSignedIn field tells you this in advance). If that happens, tell them their cart is saved and ask them to sign in from the panel on screen, then try checkout again — never say the cart was lost. checkout succeeding does NOT open the payment window — tell them to tap 'Resume payment' on screen to open it, never claim it's already open.";
       // Purely background context, never something to announce unprompted
       // — mentioning a past purchase should feel like a shopkeeper who
       // remembers a regular, not a recitation of records. Use it only if
@@ -448,9 +706,12 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
       const historyLine = historySummary
         ? ` ${historySummary} Only bring this up if it's naturally relevant — never announce it unprompted at the start of the call.`
         : "";
+      const viewedLine = viewedSummary
+        ? ` ${viewedSummary} Only bring this up if it's naturally relevant (e.g. they seem undecided, or ask what they were just looking at) — never announce it unprompted, and never make them feel watched.`
+        : "";
       const systemInstruction = knownName
-        ? `You are Sanchay, warm Indian shopping assistant. This shopper's name is ${knownName} — greet FIRST in Hindi using it, e.g. 'Namaste ${knownName}! Sanchay mein aapka swagat hai — bataiye kya dekhna chahenge?' Do NOT ask for their name again, you already know it. Then detect user's language and continue in that language. Be concise 1-2 sentences. ${toolsAndBudgetLine}${historyLine}`
-        : `You are Sanchay, warm Indian shopping assistant. Greet FIRST in Hindi: 'Namaste! Sanchay mein aapka swagat hai — bataiye kya dekhna chahenge? Aapka naam kya hai?' If you don't know name, ask once and MUST call save_user_name with first name they give before continuing. Then detect user's language and continue in that language. Be concise 1-2 sentences. ${toolsAndBudgetLine}${historyLine}`;
+        ? `You are Sanchay, warm Indian shopping assistant. This shopper's name is ${knownName} — greet FIRST in Hindi using it, e.g. 'Namaste ${knownName}! Sanchay mein aapka swagat hai — bataiye kya dekhna chahenge?' Do NOT ask for their name again, you already know it. Then detect user's language and continue in that language. Be concise 1-2 sentences. ${toolsAndBudgetLine}${historyLine}${viewedLine}`
+        : `You are Sanchay, warm Indian shopping assistant. Greet FIRST in Hindi: 'Namaste! Sanchay mein aapka swagat hai — bataiye kya dekhna chahenge? Aapka naam kya hai?' If you don't know name, ask once and MUST call save_user_name with first name they give before continuing. Then detect user's language and continue in that language. Be concise 1-2 sentences. ${toolsAndBudgetLine}${historyLine}${viewedLine}`;
       const ai = new GoogleGenAI({ apiKey: token!, httpOptions: { apiVersion: "v1alpha" } } as any);
       const session: any = await (ai as any).live.connect({
         model: MODEL,
@@ -556,6 +817,7 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
       const w = new AudioWorkletNode(ctx, "pcm-capture");
       workletRef.current = w;
       w.port.onmessage = (e: MessageEvent) => {
+        if (pausedRef.current) return; // mic frames dropped entirely while paused — nothing sent to Gemini
         const b = e.data as ArrayBuffer;
         if (!b?.byteLength) return;
         const b64 = btoa(String.fromCharCode(...new Uint8Array(b)));
@@ -578,6 +840,8 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
 
   const stopCall = useCallback(() => {
     hasGreetedRef.current = false;
+    pausedRef.current = false;
+    setIsPaused(false);
     try { sessionRef.current?.close(); } catch { }
     sessionRef.current = null;
     streamRef.current?.getTracks().forEach(t => t.stop());
@@ -607,8 +871,43 @@ export function useGeminiLive(onCheckoutSuccess?: (orderId: string, amount: numb
   const dismissError = useCallback(() => setError(null), []);
   useEffect(() => () => stopCall(), [stopCall]);
 
+  /**
+   * Pauses the mic without ending the call — the WebSocket connection and
+   * everything Gemini already knows (cart contents, name, prior turns) stay
+   * exactly as they are. Two things happen, both reversible instantly:
+   *  1. The actual MediaStreamTrack is disabled (not just its data dropped
+   *     in the worklet callback) — a disabled track outputs silence to
+   *     every downstream tap, so the mic level meter correctly reads zero
+   *     while paused rather than visibly moving with no audio actually
+   *     being sent, which would look broken.
+   *  2. audioStreamEnd is sent, per Gemini's own guidance for pausing an
+   *     audio stream for more than ~1s — it flushes any partial audio
+   *     already buffered server-side so a resumed stream starts clean
+   *     rather than replaying a stale fragment.
+   * Does nothing to the agent's own in-flight speech — if it's mid-sentence
+   * when paused, it finishes naturally; pausing only stops NEW input from
+   * being sent, so no new turn starts until resumeCall.
+   */
+  const pauseCall = useCallback(() => {
+    if (!sessionRef.current || pausedRef.current) return;
+    pausedRef.current = true;
+    setIsPaused(true);
+    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
+    try { sessionRef.current.sendRealtimeInput({ audioStreamEnd: true }); } catch { }
+  }, []);
+
+  const resumeCall = useCallback(() => {
+    if (!sessionRef.current || !pausedRef.current) return;
+    pausedRef.current = false;
+    setIsPaused(false);
+    streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = true; });
+    // No explicit "resume" message exists or is needed — per Gemini's docs,
+    // the client can resume sending audio data at any time; the very next
+    // worklet frame (now unblocked by pausedRef being false) does that.
+  }, []);
+
   return {
-    callState, transcripts, error, micLevel, agentLevel,
-    startCall, stopCall, dismissError, prefetchToken,
+    callState, transcripts, error, micLevel, agentLevel, isPaused,
+    startCall, stopCall, pauseCall, resumeCall, dismissError, prefetchToken, setAuthToken, setActiveSessionId,
   };
 }
