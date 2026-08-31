@@ -35,12 +35,10 @@ export async function migrateGuestSessionToUser(
   if (!oldUserId) return;
 
   const oldPrefs = await env.DB.prepare(
-    "SELECT preferred_categories, budget_preference, previous_products, purchase_history, name FROM user_preferences WHERE user_id = ?",
+    "SELECT previous_products, purchase_history, name FROM user_preferences WHERE user_id = ?",
   )
     .bind(oldUserId)
     .first<{
-      preferred_categories: string | null;
-      budget_preference: number | null;
       previous_products: string | null;
       purchase_history: string | null;
       name: string | null;
@@ -48,10 +46,10 @@ export async function migrateGuestSessionToUser(
   if (!oldPrefs) return;
 
   const newPrefs = await env.DB.prepare(
-    "SELECT preferred_categories, previous_products, purchase_history, name FROM user_preferences WHERE user_id = ?",
+    "SELECT previous_products, purchase_history, name FROM user_preferences WHERE user_id = ?",
   )
     .bind(newUserId)
-    .first<{ preferred_categories: string | null; previous_products: string | null; purchase_history: string | null; name: string | null }>();
+    .first<{ previous_products: string | null; purchase_history: string | null; name: string | null }>();
 
   const mergeArrays = (a: string | null, b: string | null): string[] => {
     const parse = (s: string | null): string[] => {
@@ -60,7 +58,6 @@ export async function migrateGuestSessionToUser(
     return [...new Set([...parse(a), ...parse(b)])];
   };
 
-  const mergedCategories = mergeArrays(oldPrefs.preferred_categories, newPrefs?.preferred_categories ?? null);
   const mergedProducts = mergeArrays(oldPrefs.previous_products, newPrefs?.previous_products ?? null);
   const mergedHistory = mergeArrays(oldPrefs.purchase_history, newPrefs?.purchase_history ?? null);
   // Prefer whatever name is already on the real account; only fall back to
@@ -69,11 +66,10 @@ export async function migrateGuestSessionToUser(
 
   const now = new Date().toISOString();
   await env.DB.prepare(
-    `INSERT INTO user_preferences (user_id, name, preferred_categories, budget_preference, previous_products, purchase_history, session_count, last_active, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+    `INSERT INTO user_preferences (user_id, name, previous_products, purchase_history, session_count, last_active, updated_at)
+     VALUES (?, ?, ?, ?, 0, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        name = COALESCE(excluded.name, user_preferences.name),
-       preferred_categories = excluded.preferred_categories,
        previous_products = excluded.previous_products,
        purchase_history = excluded.purchase_history,
        updated_at = excluded.updated_at`,
@@ -81,8 +77,6 @@ export async function migrateGuestSessionToUser(
     .bind(
       newUserId,
       mergedName,
-      JSON.stringify(mergedCategories),
-      oldPrefs.budget_preference ?? null,
       JSON.stringify(mergedProducts),
       JSON.stringify(mergedHistory),
       now,
