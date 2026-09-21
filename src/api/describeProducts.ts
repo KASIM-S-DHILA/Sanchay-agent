@@ -3,7 +3,19 @@ import { validateSession, logAuthFailure } from "../middleware/session";
 import { checkRateLimit, clientIp, rateLimitedResponse } from "../middleware/rateLimit";
 import { logApiCall } from "../middleware/audit";
 
-const VISION_MODEL = "gemini-2.0-flash";
+// gemini-2.0-flash was retired by Google (confirmed live in production:
+// generateContent started returning "This model ... is no longer
+// available" — exactly the error surfaced to the shopper as "describing
+// this item failed" whenever describe_product_images/compare was used).
+// Google's error suggested gemini-3.6-flash as the direct replacement, but
+// gemini-3.8-flash is the current GA Flash model (since Sept 2026) and, as
+// of writing, actually CHEAPER than 3.6-flash under Google's introductory
+// pricing ($0.75/$3.75 per 1M tokens vs 3.6-flash's $1.50/$7.50) — worth
+// picking the newer one directly rather than the minimum fix, since this
+// endpoint makes a real billed call per invocation and vision is called
+// out as core to the shopping experience (see the rate-limit comment
+// below).
+const VISION_MODEL = "gemini-3.8-flash";
 // Matches the floating-window cap (see useProductWindows.ts) — a shopper
 // can never have more than this many windows open at once, so this is
 // already the natural ceiling; enforced independently here too so a
