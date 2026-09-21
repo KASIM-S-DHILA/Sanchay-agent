@@ -1,8 +1,14 @@
+import type { SessionHub } from "./durable/SessionHub";
+
 export interface Env {
   AI: Ai;
   DB: D1Database;
   VECTOR_INDEX: VectorizeIndex;
   ASSETS: Fetcher;
+  // One instance per session (see SessionHub.ts) — holds that session's
+  // live WebSocket connection(s), pushed to after cart/checkout/webhook
+  // mutations instead of the browser polling every 3s to find out.
+  SESSION_HUB: DurableObjectNamespace<SessionHub>;
   RAZORPAY_KEY_ID: string;
   RAZORPAY_KEY_SECRET: string;
   RAZORPAY_WEBHOOK_SECRET: string;

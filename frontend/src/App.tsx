@@ -8,6 +8,7 @@ import { Shelf, type ShelfSource } from "./components/Shelf";
 import type { CatalogProduct } from "./components/ProductCard";
 import { VoiceDock } from "./components/VoiceDock";
 import { useAuditFeed } from "./hooks/useAuditFeed";
+import { useSessionLive } from "./hooks/useSessionLive";
 import { useAuth } from "./hooks/useAuth";
 import { useGeminiLive } from "./hooks/useGeminiLive";
 import { useProductWindows } from "./hooks/useProductWindows";
@@ -474,6 +475,11 @@ export default function App() {
   const pollingActive = voice.callState !== "idle" && tabVisible;
 
   // — Cart ———————————————————————————————————————————————————————————
+  // loadCartRef lets useSessionLive's push handler (below) call the exact
+  // same fetch this effect's own timer uses, without needing `load` in a
+  // dependency array — a plain function recreated every render would
+  // otherwise churn the effect below on every render.
+  const loadCartRef = useRef<() => void>(() => { });
   useEffect(() => {
     if (!sessionId || !pollingActive) return;
     let cancelled = false;
@@ -481,7 +487,13 @@ export default function App() {
       const data = await api("/api/cart");
       if (!cancelled && data?.success) setCart(data.data);
     };
+    loadCartRef.current = () => void load();
     void load(); // catch up immediately whenever polling turns back on
+    // Kept running as a fallback even with push wired in below — see
+    // useSessionLive.ts's own doc comment: push is a fast path layered on
+    // top, not a replacement, so a dropped/never-connected socket still
+    // degrades to exactly this same timer, unchanged from before push
+    // existed.
     const timer = setInterval(load, 3000);
     return () => {
       cancelled = true;
@@ -664,7 +676,20 @@ export default function App() {
   );
 
   // — Audit feed: one poller, several consumers ————————————————————————
-  const { events, loaded: auditFeedLoaded } = useAuditFeed(sessionId, pollingActive);
+  const { events, refresh: refreshAudit, loaded: auditFeedLoaded } = useAuditFeed(sessionId, pollingActive);
+
+  // — Live push (SessionHub Durable Object) — fast path layered on top of
+  // the polling above, not a replacement for it (see useSessionLive.ts).
+  // Held open under the exact same condition as pollingActive itself:
+  // whatever counted as "worth polling" also counts as "worth having a
+  // live connection". A push signal just means "don't wait for the next
+  // timer tick" — it triggers the SAME fetches the timers already run,
+  // through the refs/closures those effects expose, rather than
+  // duplicating fetch logic here.
+  useSessionLive(sessionId, pollingActive, useCallback(() => {
+    loadCartRef.current();
+    void refreshAudit();
+  }, [refreshAudit]));
 
   useEffect(() => {
     // Wait for the FIRST real fetch to resolve before deciding anything is

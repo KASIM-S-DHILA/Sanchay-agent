@@ -3,6 +3,7 @@ import { validateSession, logAuthFailure } from "../middleware/session";
 import { getAuthUser } from "../middleware/auth";
 import { isUnsubstitutedPlaceholder, placeholderError } from "../middleware/placeholders";
 import { checkRateLimit, clientIp, maybeCleanupExpiredRows, rateLimitedResponse } from "../middleware/rateLimit";
+import { notifySessionChanged } from "../middleware/live";
 import {
   addToCart,
   removeFromCart,
@@ -53,6 +54,19 @@ export async function handleCartAdd(request: Request, env: Env): Promise<Respons
   // Quantity range/integer validation happens inside addToCart, so HTTP and
   // voice tool calls get identical enforcement from one place.
   const result = await addToCart(env, session.id, productId, body.quantity, idempotencyKey);
+  // Only a genuine mutation is worth pushing — a rejected add (out of
+  // stock, over budget, bad quantity) changed nothing for any OTHER tab/
+  // connection to catch up on.
+  //
+  // AWAITED, not fire-and-forget — a Worker's execution context can be torn
+  // down the instant its Response is returned, killing any still-pending
+  // promise that isn't either awaited or handed to ctx.waitUntil() first.
+  // An un-awaited notify call here was confirmed LIVE to never actually
+  // reach the DO (the push simply never arrived), even though the exact
+  // same notify() call worked perfectly when awaited directly in a
+  // diagnostic route during debugging. The RPC itself, the WebSocket
+  // registration, and delivery were never the problem — only this.
+  if (result.body.success) await notifySessionChanged(env, session.id);
   return Response.json(result.body, { status: result.status });
 }
 
@@ -83,6 +97,10 @@ export async function handleCartRemove(request: Request, env: Env): Promise<Resp
   // Quantity range/integer validation happens inside removeFromCart, so HTTP
   // and voice tool calls get identical enforcement from one place.
   const result = await removeFromCart(env, session.id, productId, body.quantity);
+  // Awaited, not fire-and-forget — see the matching comment in
+  // handleCartAdd above for why this matters (a Worker's execution
+  // context can be torn down before an un-awaited promise resolves).
+  if (result.body.success) await notifySessionChanged(env, session.id);
   return Response.json(result.body, { status: result.status });
 }
 

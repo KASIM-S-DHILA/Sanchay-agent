@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { json, withApiLogging, logApiCall, type ApiResult } from "../middleware/audit";
 import { hmacSHA256 } from "../crypto";
 import { clearPaidItemsFromCart, releaseOrderStock } from "./logic";
+import { notifySessionChanged } from "../middleware/live";
 
 export async function handleRazorpayWebhook(request: Request, env: Env): Promise<Response> {
   const body = await request.text();
@@ -125,6 +126,21 @@ async function handlePaymentFailed(env: Env, event: any): Promise<ApiResult> {
     durationMs: 0,
   });
 
+  // This is the ONE case a browser genuinely cannot learn about any other
+  // way than being told — a payment.failed event comes from Razorpay's
+  // servers, not the shopper's own action, so there was never a request/
+  // response for the shopper's own tab to update its state from. Push (or
+  // the polling this replaces) is the only path this reaches the screen
+  // at all.
+  //
+  // Awaited, not fire-and-forget — withApiLogging (the caller of this
+  // function) awaits this handler's own promise, but ONLY up to whatever
+  // this function itself awaits before returning; an un-awaited call left
+  // inside here can still be torn down once this function's return value
+  // resolves. See the matching comment in api/cart.ts's handleCartAdd for
+  // how this was confirmed live as a real bug, not a theoretical one.
+  await notifySessionChanged(env, orderRow.session_id);
+
   return json({ success: true, data: { status: "ok" } });
 }
 
@@ -232,6 +248,15 @@ async function handlePaymentCaptured(env: Env, paymentId: string, orderId: strin
       status: "ok",
       durationMs: 0,
     });
+
+    // Same reasoning as the payment.failed path above — a payment
+    // actually clearing is discovered here, from Razorpay's own webhook,
+    // never from a request the shopper's own browser made. This is the
+    // single most important push of the whole feature: it's what turns
+    // "confirmed" on screen the instant the money actually moves, instead
+    // of up to 3 seconds later. Awaited, not fire-and-forget — see the
+    // matching comment on the payment.failed path above.
+    await notifySessionChanged(env, sessionId);
 
     return json({ success: true, data: { status: "ok" } });
   }
