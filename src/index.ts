@@ -22,13 +22,53 @@ import { handleProductDetails } from "./api/productDetails";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
 import { handleGeminiToken } from "./api/geminiToken";
 import { checkAdminToken } from "./middleware/adminAuth";
+import { validateSession } from "./middleware/session";
 import type { Env } from "./types";
+
+// Re-exported so wrangler can find the class named in wrangler.jsonc's
+// durable_objects binding — required regardless of whether index.ts
+// itself references SessionHub by name anywhere else.
+export { SessionHub } from "./durable/SessionHub";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, x-session-id, Authorization",
 };
+
+/**
+ * Upgrades to a WebSocket held by this session's SessionHub Durable Object
+ * (see src/durable/SessionHub.ts) — pushes a "changed" signal after cart/
+ * checkout/webhook mutations so the frontend can re-fetch immediately
+ * instead of waiting for its next poll tick.
+ *
+ * Session validation happens HERE, in the Worker, before the DO is ever
+ * reached — same trust model /api/audit already uses (a session id in
+ * ?session_id, matched against the caller's own x-session-id header; see
+ * validateSession in middleware/session.ts). The DO itself has no concept
+ * of auth at all; it trusts that reaching it at all already proves the
+ * caller owns this session. Not gated any tighter than that on purpose —
+ * this channel only ever pushes "something changed", never any cart/
+ * order contents, so there's nothing sensitive to leak even in the guest-
+ * session-id-only trust model the rest of this app's cart/audit endpoints
+ * already use.
+ */
+async function handleSessionLive(request: Request, env: Env, url: URL): Promise<Response> {
+  const upgradeHeader = request.headers.get("Upgrade");
+  if (!upgradeHeader || upgradeHeader.toLowerCase() !== "websocket") {
+    return new Response("Expected Upgrade: websocket", { status: 426 });
+  }
+  const sessionId = url.searchParams.get("session_id");
+  if (!sessionId) {
+    return new Response("Missing session_id", { status: 400 });
+  }
+  const caller = await validateSession(env, request);
+  if (!caller || caller.id !== sessionId) {
+    return new Response("Invalid or expired session", { status: 401 });
+  }
+  const stub = env.SESSION_HUB.getByName(sessionId);
+  return stub.fetch(request);
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -93,6 +133,9 @@ export default {
         response = await handleOrderStatus(request, env, url);
       } else if (url.pathname === "/api/audit" && request.method === "GET") {
         response = await handleAudit(request, env, url);
+      } else if (url.pathname === "/api/live" && request.method === "GET") {
+        response = await handleSessionLive(request, env, url);
+
       } else if (url.pathname === "/api/voice/transcript" && request.method === "GET") {
         response = await handleGetTranscript(request, env, url);
       } else if (url.pathname === "/api/tools" && request.method === "GET") {

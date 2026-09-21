@@ -49,6 +49,29 @@
       "database_id": "3ca05b11-abd8-47a5-9f9d-a2906d93f5b2"
     }
   ],
+  // One SessionHub instance per session (see getByName(sessionId) at every
+  // call site) — holds that session's live WebSocket connection(s) and
+  // pushes a "something changed" signal after cart/checkout/webhook
+  // mutations, replacing the 3s call-gated polling this session's
+  // hardening work built (see useAuditFeed.ts / App.tsx's pollingActive)
+  // with an event-driven push. Deliberately dumb: no D1 access, no
+  // business logic — see src/durable/SessionHub.ts.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSION_HUB",
+        "class_name": "SessionHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "SessionHub"
+      ]
+    }
+  ],
   "vectorize": [
     {
       "binding": "VECTOR_INDEX",

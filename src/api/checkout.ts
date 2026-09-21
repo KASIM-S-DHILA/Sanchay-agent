@@ -4,6 +4,7 @@ import { validateSessionWithAuth, getAuthUser } from "../middleware/auth";
 import { checkRateLimit, clientIp, rateLimitedResponse } from "../middleware/rateLimit";
 import { isUnsubstitutedPlaceholder, placeholderError } from "../middleware/placeholders";
 import { logApiCall } from "../middleware/audit";
+import { notifySessionChanged } from "../middleware/live";
 import { checkoutCart, getOrderStatus } from "./logic";
 
 export async function handleCheckout(request: Request, env: Env): Promise<Response> {
@@ -68,6 +69,17 @@ export async function handleCheckout(request: Request, env: Env): Promise<Respon
   if (!ipLimit.allowed) return rateLimitedResponse();
 
   const result = await checkoutCart(env, session.id);
+  // Checkout can lock/reserve stock and open a pending-payment state on
+  // the cart even before any money moves — worth a push regardless of
+  // whether it fully succeeded, since even a partial/graceful failure
+  // (e.g. an item's stock vanished) can change what the cart now shows.
+  //
+  // Awaited, not fire-and-forget — see the matching comment in
+  // api/cart.ts's handleCartAdd for why: an un-awaited promise here can be
+  // torn down by the runtime the instant this handler's Response is
+  // returned, before the DO notify RPC actually completes — confirmed live
+  // as the real cause of pushes silently never arriving.
+  await notifySessionChanged(env, session.id);
   return Response.json(result.body, { status: result.status });
 }
 
