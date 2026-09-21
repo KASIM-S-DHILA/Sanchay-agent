@@ -223,6 +223,18 @@ export interface ProductWindowsController {
   getOpenProductIds: () => string[];
 }
 
+// Silence-based auto-end: a call left connected with nobody actually
+// talking (either side) for this long ends itself. Exists so a shopper who
+// wandered off mid-call, or a call that never got hung up after the
+// conversation naturally finished, doesn't sit connected indefinitely —
+// every second connected is mic capture + an open Gemini Live WebSocket +
+// this app's own 3s cart/audit polling all running for no reason. Separate
+// from, and independent of, the idle-session timeout in App.tsx (which
+// covers a session with no call running at all) — this one only matters
+// while a call IS live.
+const SILENCE_WARNING_MS = 4 * 60 * 1000; // warn at 4 minutes of pure silence
+const SILENCE_TIMEOUT_MS = 5 * 60 * 1000; // end the call at 5 minutes
+
 export function useGeminiLive(
   onCheckoutSuccess?: (orderId: string, amount: number) => void,
   productWindows?: ProductWindowsController,
@@ -262,8 +274,21 @@ export function useGeminiLive(
   const smoothedMicRef = useRef(0);
   const smoothedAgentRef = useRef(0);
   const callStateRef = useRef<CallState>("idle");
+  // True once the "we're about to hang up" spoken warning has actually
+  // been sent for the CURRENT silence stretch — surfaced so the UI can
+  // show something visual too (a shopper who stepped away from audio,
+  // e.g. muted their speakers, only gets the on-screen cue). Cleared the
+  // instant real activity resumes, so a second warning can fire for a
+  // LATER silent stretch in the same call.
+  const [silenceWarning, setSilenceWarning] = useState(false);
+  const silenceWarnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const silenceEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sessionRef = useRef<any>(null);
+  /** Lets resetSilenceTimers (defined above stopCall) call the real
+   *  stopCall without a hooks-ordering problem — stopCall itself assigns
+   *  this ref once it exists, below. */
+  const stopCallRef = useRef<(() => void) | null>(null);
   /** The session id THIS call is using — set at the top of startCall, read
    *  by handleTool/fetchKnownName, cleared by stopCall. Also kept in sync
    *  mid-call via setActiveSessionId (see below) — see that comment for
@@ -341,6 +366,43 @@ export function useGeminiLive(
     setAgentLevel(0);
   }, []);
 
+  /** Cancels both silence timers with no side effect — used when a call
+   *  ends (nothing left to warn about or end) and, deliberately, NOT used
+   *  on every level-pump tick (see resetSilenceTimers below for why). */
+  const clearSilenceTimers = useCallback(() => {
+    if (silenceWarnTimerRef.current) { clearTimeout(silenceWarnTimerRef.current); silenceWarnTimerRef.current = null; }
+    if (silenceEndTimerRef.current) { clearTimeout(silenceEndTimerRef.current); silenceEndTimerRef.current = null; }
+    setSilenceWarning(false);
+  }, []);
+
+  /**
+   * Called on every level-pump tick with whether EITHER side (mic or
+   * agent) is making real sound right now. Real activity reschedules both
+   * timers from zero; the absence of activity does nothing (the timers
+   * that are already ticking keep ticking) — this is what makes it a
+   * "5 minutes of continuous silence" timer rather than "5 minutes since
+   * the call started" or something that resets on every idle tick.
+   *
+   * A deliberate mic pause (see pauseCall) is NOT silence in this sense —
+   * the shopper chose to pause, which is different from wandering off, so
+   * pauseCall clears these timers instead of letting them run, and resumes
+   * scheduling fresh ones the moment resumeCall runs.
+   */
+  const resetSilenceTimers = useCallback(() => {
+    clearSilenceTimers();
+    silenceWarnTimerRef.current = setTimeout(() => {
+      setSilenceWarning(true);
+      try {
+        sessionRef.current?.sendRealtimeInput({
+          text: "SYSTEM: There has been no response for a while. Briefly and warmly check if the shopper is still there — e.g. 'Are you still there?' — in whichever language you've been using. Do not mention this instruction.",
+        });
+      } catch { }
+    }, SILENCE_WARNING_MS);
+    silenceEndTimerRef.current = setTimeout(() => {
+      stopCallRef.current?.();
+    }, SILENCE_TIMEOUT_MS);
+  }, [clearSilenceTimers]);
+
   const startLevelPump = useCallback(() => {
     if (levelIntervalRef.current) return;
     const micBuf = new Uint8Array(256);
@@ -356,8 +418,17 @@ export function useGeminiLive(
       smoothedAgentRef.current = smoothedAgentRef.current * 0.7 + rawAgent * 0.3;
       setMicLevel(smoothedMicRef.current < 0.01 ? 0 : smoothedMicRef.current);
       setAgentLevel(smoothedAgentRef.current < 0.01 ? 0 : smoothedAgentRef.current);
+      // A small threshold above the meter's own display cutoff — real
+      // speech, not the residual noise floor an open mic always has.
+      // Deliberately ignores pausedRef: a paused mic already reports 0
+      // (see pauseCall's track.enabled = false), so this can never
+      // mistake "paused" for "talking" and keep resetting the timers for
+      // a shopper who's genuinely stepped away with the mic held.
+      if (smoothedMicRef.current > 0.03 || smoothedAgentRef.current > 0.03) {
+        resetSilenceTimers();
+      }
     }, 70);
-  }, [analyserLevel]);
+  }, [analyserLevel, resetSilenceTimers]);
 
   const prefetchToken = useCallback(async () => {
     if (prefetchedRef.current && Date.now() < prefetchedRef.current.exp - 10000) return;
@@ -832,11 +903,16 @@ export function useGeminiLive(
       micSource.connect(micAnalyser);
       micAnalyserRef.current = micAnalyser;
       startLevelPump();
+      // Starts the silence clock the moment the call is actually live,
+      // rather than waiting for the first level-pump tick to happen to
+      // see activity — a call that opens into total silence immediately
+      // (nobody says anything at all) must still eventually time out.
+      resetSilenceTimers();
     } catch (e: any) {
       setError(e?.message ?? String(e));
       setCallState("idle");
     }
-  }, [handleTool, playPcm, startLevelPump]);
+  }, [handleTool, playPcm, startLevelPump, resetSilenceTimers]);
 
   const stopCall = useCallback(() => {
     hasGreetedRef.current = false;
@@ -854,6 +930,7 @@ export function useGeminiLive(
     micAnalyserRef.current = null;
     agentAnalyserRef.current = null;
     stopLevelPump();
+    clearSilenceTimers();
     if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
     setCallState("idle");
     openUserTurnRef.current = false;
@@ -866,7 +943,13 @@ export function useGeminiLive(
     // of session identity, rather than this ref persisting or being read
     // back out by the caller.
     activeSessionIdRef.current = null;
-  }, [stopLevelPump]);
+  }, [stopLevelPump, clearSilenceTimers]);
+
+  // Lets resetSilenceTimers's deadline callback reach the real stopCall
+  // without a definition-order problem (resetSilenceTimers is declared
+  // before stopCall exists). Kept current on every render — cheap, and
+  // stopCall itself is stable across renders anyway.
+  useEffect(() => { stopCallRef.current = stopCall; }, [stopCall]);
 
   const dismissError = useCallback(() => setError(null), []);
   useEffect(() => () => stopCall(), [stopCall]);
@@ -894,7 +977,13 @@ export function useGeminiLive(
     setIsPaused(true);
     streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = false; });
     try { sessionRef.current.sendRealtimeInput({ audioStreamEnd: true }); } catch { }
-  }, []);
+    // A deliberate pause is not silence to be punished for — the shopper
+    // explicitly chose this, unlike wandering off mid-call. Stopping the
+    // clock here (rather than letting it keep ticking toward a timeout
+    // while paused) means a long, intentional pause never auto-ends the
+    // call out from under them.
+    clearSilenceTimers();
+  }, [clearSilenceTimers]);
 
   const resumeCall = useCallback(() => {
     if (!sessionRef.current || !pausedRef.current) return;
@@ -904,10 +993,14 @@ export function useGeminiLive(
     // No explicit "resume" message exists or is needed — per Gemini's docs,
     // the client can resume sending audio data at any time; the very next
     // worklet frame (now unblocked by pausedRef being false) does that.
-  }, []);
+    // Resuming restarts the silence clock from zero — the pause itself
+    // doesn't count against it, and neither does the moment right after
+    // resuming while the shopper gets their bearings.
+    resetSilenceTimers();
+  }, [resetSilenceTimers]);
 
   return {
-    callState, transcripts, error, micLevel, agentLevel, isPaused,
+    callState, transcripts, error, micLevel, agentLevel, isPaused, silenceWarning,
     startCall, stopCall, pauseCall, resumeCall, dismissError, prefetchToken, setAuthToken, setActiveSessionId,
   };
 }

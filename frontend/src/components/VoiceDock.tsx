@@ -29,6 +29,7 @@ export function VoiceDock({
   micLevel,
   agentLevel,
   isPaused,
+  silenceWarning,
   onStart,
   onStop,
   onPause,
@@ -42,6 +43,13 @@ export function VoiceDock({
   micLevel: number;
   agentLevel: number;
   isPaused: boolean;
+  // True once the call has been silent (nobody on either side speaking)
+  // long enough that Sanchay is about to check in and, if there's still
+  // no response, hang up on its own — see the silence timers in
+  // useGeminiLive.ts. Shown visually so a shopper whose speakers happen
+  // to be muted (and so wouldn't hear the spoken check-in) still gets a
+  // cue before the call ends under them.
+  silenceWarning?: boolean;
   onStart: () => void;
   onStop: () => void;
   onPause: () => void;
@@ -79,11 +87,13 @@ export function VoiceDock({
                 {isPaused ? "Mic is off — nothing is being heard" : speaking ? "Hold on — hear him out" : "Go ahead, speak"}
               </span>
               <span className="dock-hint">
-                {isPaused
-                  ? "Resume when you're ready to keep talking."
-                  : speaking
-                    ? "Cut in any time; he'll stop."
-                    : "Ask for something, or say “checkout” when the bill looks right."}
+                {!isPaused && silenceWarning
+                  ? "Still there? The call ends soon if there's no response."
+                  : isPaused
+                    ? "Resume when you're ready to keep talking."
+                    : speaking
+                      ? "Cut in any time; he'll stop."
+                      : "Ask for something, or say “checkout” when the bill looks right."}
               </span>
             </div>
             <div className="dock-actions">

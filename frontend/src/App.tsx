@@ -533,6 +533,68 @@ export default function App() {
     void voice.startCall(sid);
   }, [ensureSession, voice]);
 
+  // — Idle session auto-end ————————————————————————————————————————————
+  // Separate from, and independent of, useGeminiLive's own silence timer
+  // (which only matters while a call is actually connected). This one
+  // covers the OTHER idle case: a session sitting open with no call ever
+  // started, or one that ended minutes ago and nothing has happened
+  // since — a tab left open on the shop, effectively abandoned. Left
+  // unbounded, that session keeps existing server-side (and would keep
+  // accumulating api_call_log rows the moment anything DID poll it)
+  // indefinitely.
+  //
+  // "Activity" here is deliberately broader than voice: any click, key
+  // press, or touch counts, so a shopper who's reading the shelf or
+  // filling in a form isn't treated as idle just because they haven't
+  // spoken. A call being live already fully resets this too (see the
+  // effect below) since talking obviously isn't idleness.
+  const IDLE_SESSION_TIMEOUT_MS = 12 * 60 * 1000; // 12 minutes of no interaction, no call
+  const lastActivityRef = useRef(Date.now());
+  useEffect(() => {
+    const mark = () => { lastActivityRef.current = Date.now(); };
+    // passive: true on add (these are read-only signals, never meant to
+    // block or alter the events) — removeEventListener doesn't take that
+    // option at all, so it's passed only on the add calls.
+    document.addEventListener("pointerdown", mark, { passive: true });
+    document.addEventListener("keydown", mark, { passive: true });
+    document.addEventListener("touchstart", mark, { passive: true });
+    return () => {
+      document.removeEventListener("pointerdown", mark);
+      document.removeEventListener("keydown", mark);
+      document.removeEventListener("touchstart", mark);
+    };
+  }, []);
+  useEffect(() => {
+    if (!sessionId) return;
+    // A live call is its own activity, continuously — without this, a
+    // long, quiet-but-connected call (the shopper mostly listening) could
+    // still get session-ended out from under an ACTIVE call just because
+    // nobody clicked anything. useGeminiLive's own silence timer is what
+    // decides whether a live call itself has gone idle; this timer only
+    // applies when there's no call to begin with.
+    if (voice.callState !== "idle") {
+      lastActivityRef.current = Date.now();
+      return;
+    }
+    const check = setInterval(() => {
+      if (Date.now() - lastActivityRef.current < IDLE_SESSION_TIMEOUT_MS) return;
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      // Deliberately does NOT touch auth/sign-in state — this ends the
+      // COUNTER (the session), not the shopper's account. A signed-in
+      // shopper who comes back after being idle just opens a fresh
+      // session via ensureSession, same as anyone else; they aren't
+      // signed out. Contrast with handleSignOut, which does both on
+      // purpose because THAT action is explicitly leaving the account.
+      void api("/api/session/end", { method: "POST" }).catch(() => { });
+      sessionIdRef.current = null;
+      setSessionId(null);
+      setCart(null);
+    }, 30_000); // checked periodically, not on every activity event — the
+    // exact moment doesn't need to be to-the-second precise.
+    return () => clearInterval(check);
+  }, [sessionId, api, voice.callState]);
+
   // — Adding ——————————————————————————————————————————————————————————
   const handleAddToCart = useCallback(
     async (productId: string) => {
@@ -745,6 +807,7 @@ export default function App() {
             micLevel={voice.micLevel}
             agentLevel={voice.agentLevel}
             isPaused={voice.isPaused}
+            silenceWarning={voice.silenceWarning}
             onStart={() => void startTalking()}
             onStop={voice.stopCall}
             onPause={voice.pauseCall}
