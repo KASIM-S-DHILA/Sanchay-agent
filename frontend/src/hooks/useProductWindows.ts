@@ -95,13 +95,27 @@ export function useProductWindows(sessionId: string | null, api: Api) {
       clearTimeout(timer);
       dwellTimersRef.current.delete(resolvedId); // never logged — closed before dwell elapsed
     }
-    setWindows((prev) => prev.filter((w) => w.productId !== resolvedId));
+    const next = current.filter((w) => w.productId !== resolvedId);
+    // Updated synchronously, not left to the next render's `windowsRef.current
+    // = windows` sync at the top of this hook — setWindows only SCHEDULES a
+    // re-render, it doesn't happen before this function returns. A caller
+    // that reads getOpenProductIds() on the very next line (see
+    // add_to_cart's handling in useGeminiLive.ts, which closes the just-
+    // added product's window and immediately reports what's STILL open)
+    // used to see the window it just closed as still present — the ref
+    // hadn't caught up yet — which is exactly what made the agent ask
+    // "what do you want to do with [the product you just told it to add]"
+    // for a window that was, on screen, already gone.
+    windowsRef.current = next;
+    setWindows(next);
     return resolvedId;
   }, []);
 
   const closeAll = useCallback(() => {
     for (const timer of dwellTimersRef.current.values()) clearTimeout(timer);
     dwellTimersRef.current.clear();
+    // Same synchronous-ref reasoning as closeProduct above.
+    windowsRef.current = [];
     setWindows([]);
   }, []);
 
