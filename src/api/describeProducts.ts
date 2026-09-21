@@ -170,18 +170,45 @@ export async function handleDescribeProducts(request: Request, env: Env): Promis
     parts.push({ inlineData: { mimeType: image!.mimeType, data: image!.data } });
   }
 
+  // Google's own vision latency for this model has been measured live
+  // anywhere from ~3s to 45+ seconds under load, occasionally a 503 —
+  // model-side variance this endpoint has no control over. Left
+  // unbounded, a genuinely stuck request would hold the shopper (and the
+  // voice call's filler line — see the SYSTEM nudge in useGeminiLive.ts)
+  // waiting indefinitely with no resolution at all. A real answer that
+  // took 45s is still better than none, so this is deliberately generous
+  // rather than tuned to the common case — it exists to catch a true hang,
+  // not to shave the typical wait.
+  const VISION_TIMEOUT_MS = 55_000;
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`,
-      {
-        method: "POST",
-        headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ role: "user", parts }] }),
-      },
-    );
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`,
+        {
+          method: "POST",
+          headers: { "x-goog-api-key": env.GEMINI_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ role: "user", parts }] }),
+          signal: controller.signal,
+        },
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
     const json: any = await res.json();
     if (!res.ok) {
-      const errBody = { success: false, error: json?.error?.message || `Vision request failed: ${res.status}` };
+      // Google's "high demand" 503 is worth a distinct, honest message —
+      // "failed" reads as broken; "busy right now, try again" reads as
+      // what actually happened and invites a retry instead of giving up.
+      const busy = res.status === 503;
+      const errBody = {
+        success: false,
+        error: busy
+          ? "The photo-viewing model is unusually busy right now — try again in a moment."
+          : json?.error?.message || `Vision request failed: ${res.status}`,
+      };
       await log(errBody, "error");
       return Response.json(errBody, { status: 502 });
     }
@@ -196,10 +223,16 @@ export async function handleDescribeProducts(request: Request, env: Env): Promis
     };
     await log(responseBody, "ok");
     return Response.json(responseBody);
-  } catch (e) {
+  } catch (e: any) {
+    const timedOut = e?.name === "AbortError";
     console.error("describe-products: vision call failed:", e);
-    const errBody = { success: false, error: "Vision request failed unexpectedly." };
+    const errBody = {
+      success: false,
+      error: timedOut
+        ? "That took too long to load — try asking again, maybe about one item at a time."
+        : "Vision request failed unexpectedly.",
+    };
     await log(errBody, "error");
-    return Response.json(errBody, { status: 500 });
+    return Response.json(errBody, { status: timedOut ? 504 : 500 });
   }
 }
