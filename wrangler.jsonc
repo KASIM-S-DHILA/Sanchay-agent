@@ -81,6 +81,25 @@
   "observability": {
     "enabled": true
   },
+  // Drives the visual-description backfill (see catalog/visualDescribe.ts
+  // and the scheduled() handler in src/index.ts) — runs once a minute,
+  // completely decoupled from any HTTP request's lifetime. This exists
+  // because ctx.waitUntil turned out to have a real ceiling that a
+  // request-triggered background job could hit mid-catalog (confirmed
+  // live: "waitUntil() tasks did not complete within the allowed time...
+  // and have been cancelled" after processing only part of a 20-product
+  // catalog). A cron trigger has no such coupling to a request/response —
+  // it just wakes up, processes one small batch of whatever still needs a
+  // description, and goes back to sleep; naturally resumes on its own the
+  // next minute if there's more to do, and naturally covers newly-added
+  // products too since it's always polling the same WHERE
+  // visual_description IS NULL backlog seedCatalog/replaceCatalog feed
+  // into.
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
   // OTP sign-in emails go through Resend's REST API (see sendOtpEmail in
   // src/api/auth.ts) rather than Cloudflare Email Sending, which requires
   // a paid zone plan. RESEND_API_KEY is a secret (wrangler secret put),

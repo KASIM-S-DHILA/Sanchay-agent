@@ -74,7 +74,8 @@ export async function seedCatalog(env: Env): Promise<void> {
       category TEXT,
       stock INTEGER,
       image_url TEXT,
-      embedding_id TEXT
+      embedding_id TEXT,
+      visual_description TEXT
     )`
   ).run();
 
