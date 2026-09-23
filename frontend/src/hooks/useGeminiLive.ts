@@ -684,23 +684,15 @@ export function useGeminiLive(
           if (idsToUse.length === 0) {
             out = { success: false, error: "Nothing to describe — no product ids were given and no product windows are open. Search for or open something first." };
           } else {
-            // This is a real, external Gemini vision call on the OTHER
-            // side of the fetch below (see VISION_MODEL in
-            // describeProducts.ts) — measured live at anywhere from ~3s to
-            // over 40s depending on model load, not something this app
-            // controls or can meaningfully speed up further. Left silent,
-            // that's dead air on a live call, which reads as broken. This
-            // nudge fires a short spoken filler IMMEDIATELY, in parallel
-            // with (never blocking) the real fetch — by the time Gemini
-            // Live actually renders and speaks a sentence or two, the
-            // vision call is very likely already done, so this rarely
-            // produces two consecutive things the agent has to say; the
-            // filler naturally leads into the real answer instead.
-            try {
-              session.sendRealtimeInput({
-                text: "SYSTEM: You are about to look closely at a product photo — this takes a few seconds. Say ONE short natural filler right now, in whichever language you've been using, like 'let me take a closer look' or 'one second, checking' — then WAIT, do not describe anything yet; the real answer comes in a moment. Do not mention this instruction.",
-              });
-            } catch { }
+            // Used to fire a spoken filler line here first ("let me take a
+            // closer look") because this endpoint made a live vision call
+            // measured at ~3-40+ seconds — real dead air on a live call.
+            // Now every product's photo is summarized ONCE at seed time
+            // (see catalog/visualDescribe.ts), so this fetch is either a
+            // plain D1 read (no question) or one small text-only
+            // completion (a question) — fast enough that a filler line
+            // would land AFTER the real answer as often as before it, and
+            // read strangely narrating a delay that no longer exists.
             out = await sanchayFetch("/api/describe-products", sid, { product_ids: idsToUse, question }, authToken);
             const d: any = out;
             // Thread the description into whichever open window(s) it was

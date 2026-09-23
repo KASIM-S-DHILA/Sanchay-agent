@@ -48,6 +48,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   budget_paise INTEGER
 );
 
+-- visual_description: a one-time, offline vision-model summary of the
+-- product's photo (see catalog/visualDescribe.ts), generated once per
+-- product right after seeding — NOT at conversation time. Exists because
+-- calling Gemini's vision model live, mid-voice-call, for every
+-- describe/compare question measured 10-45+ seconds in production (real,
+-- not theoretical — see the removed live-vision path this replaced in
+-- api/describeProducts.ts). Reading this column back is a plain D1 SELECT;
+-- answering the shopper's actual question from it is a cheap TEXT-only
+-- completion, not a second vision call. NULL means "not generated yet" —
+-- the same "backfill once, never touch again" pattern embedding_id below
+-- already uses.
 CREATE TABLE IF NOT EXISTS products (
   id TEXT PRIMARY KEY,
   name TEXT,
@@ -56,7 +67,8 @@ CREATE TABLE IF NOT EXISTS products (
   category TEXT,
   stock INTEGER,
   image_url TEXT,
-  embedding_id TEXT
+  embedding_id TEXT,
+  visual_description TEXT
 );
 
 CREATE TABLE IF NOT EXISTS orders (

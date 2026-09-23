@@ -12,7 +12,8 @@ import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
 import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
-import { handleSeedCatalog, handleReplaceCatalog } from "./api/admin";
+import { handleSeedCatalog, handleReplaceCatalog, handleAcceptVisionLicense, handleRunVisualDescriptions } from "./api/admin";
+import { generateVisualDescriptions } from "./catalog/visualDescribe";
 import { handleSaveName } from "./api/user";
 import { handleAuthOtpSend, handleAuthOtpVerify } from "./api/auth";
 import { handleAccountProfile } from "./api/account";
@@ -71,7 +72,7 @@ async function handleSessionLive(request: Request, env: Env, url: URL): Promise<
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -150,6 +151,10 @@ export default {
         response = checkAdminToken(env, request) ?? (await handleSeedCatalog(request, env));
       } else if (url.pathname === "/admin/replace-catalog" && request.method === "POST") {
         response = checkAdminToken(env, request) ?? (await handleReplaceCatalog(request, env));
+      } else if (url.pathname === "/admin/accept-vision-license" && request.method === "POST") {
+        response = checkAdminToken(env, request) ?? (await handleAcceptVisionLicense(request, env));
+      } else if (url.pathname === "/admin/run-visual-descriptions" && request.method === "POST") {
+        response = checkAdminToken(env, request) ?? (await handleRunVisualDescriptions(request, env));
       } else {
         // Frontend SPA
         response = await env.ASSETS.fetch(request);
@@ -172,5 +177,33 @@ export default {
         { status: 500, headers: CORS_HEADERS },
       );
     }
+  },
+
+  /**
+   * Drives the visual-description backfill (see catalog/visualDescribe.ts)
+   * on a fixed schedule (triggers.crons in wrangler.jsonc — every minute)
+   * instead of tying it to any single HTTP request's lifetime. Each tick
+   * processes one small batch of whatever products still have a NULL
+   * visual_description and returns — completely decoupled from
+   * ctx.waitUntil, which was measured live to have a real ceiling that a
+   * request-triggered background job for a ~20-product catalog exceeded
+   * ("waitUntil() tasks did not complete within the allowed time... and
+   * have been cancelled"). A scheduled invocation has its own separate
+   * execution budget every time it fires, so the backlog just gets
+   * cleared over a few ticks with zero admin interaction, and any
+   * newly-seeded product picks up a description automatically the same
+   * way.
+   */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      generateVisualDescriptions(env).then(
+        (r) => {
+          if (r.described > 0 || r.skipped > 0) {
+            console.log(`visualDescribe cron tick: described=${r.described} skipped=${r.skipped}`);
+          }
+        },
+        (e) => console.error("visualDescribe cron tick failed:", e),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
