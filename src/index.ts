@@ -19,6 +19,7 @@ import { handleAuthOtpSend, handleAuthOtpVerify } from "./api/auth";
 import { handleAccountProfile } from "./api/account";
 import { handleLogViewedProduct, handleGetViewedProducts } from "./api/viewedProducts";
 import { handleDescribeProducts } from "./api/describeProducts";
+import { handleProductFrame } from "./api/productFrame";
 import { handleProductDetails } from "./api/productDetails";
 import { handleGetTools, handleOpenApiSpec } from "./api/tools";
 import { handleGeminiToken } from "./api/geminiToken";
@@ -100,6 +101,10 @@ export default {
         response = await handleGetViewedProducts(request, env);
       } else if (url.pathname === "/api/describe-products" && request.method === "POST") {
         response = await handleDescribeProducts(request, env);
+      } else if (url.pathname === "/api/product-frame" && request.method === "POST") {
+        // Allowlisted catalog photo bytes for in-call Live vision frames
+        // (see api/productFrame.ts and the look_at_product voice tool).
+        response = await handleProductFrame(request, env);
       } else if (url.pathname === "/api/product-details" && request.method === "POST") {
         response = await handleProductDetails(request, env);
       } else if ((url.pathname === "/api/user/name") && (request.method === "POST" || request.method === "GET")) {
