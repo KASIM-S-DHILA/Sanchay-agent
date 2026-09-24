@@ -81,6 +81,26 @@ const sanchayTools = [
       },
       { name: "save_user_name", description: "Save or correct shopper's first name. Call once when asked, or again only if they explicitly correct it.", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
       {
+        // Shows the model the product's actual photo in-call so it can
+        // answer from what it sees. Call ONLY when the shopper asks a
+        // visual question the stored description may not cover (a detail
+        // like stitching, logos, exact shade, count of buttons/pockets)
+        // — for ordinary "what does it look like" questions,
+        // describe_product_images (stored text, instant) is enough and
+        // cheaper. One product per call; pass its exact catalog id.
+        name: "look_at_product",
+        description:
+          "Show yourself the product's actual photo in-call and answer the shopper's visual question from what you see. Use ONLY when they ask about a specific visible detail (stitching, logos, exact shade, number of buttons/pockets, print placement) that a written summary might miss — never for general browsing or price/stock questions. One exact catalog product_id per call, plus their question.",
+        parameters: {
+          type: "object",
+          properties: {
+            product_id: { type: "string" },
+            question: { type: "string" },
+          },
+          required: ["product_id"],
+        },
+      },
+      {
         name: "set_budget",
         description:
           "Set, change, or remove the shopper's spending cap for THIS visit only — it never carries over to a future visit, even if they're signed in. Call whenever they state or change a budget out loud (e.g. 'keep me under 2000 rupees', 'actually make it 3000'). To remove an existing cap entirely (e.g. 'no limit', 'remove my budget'), call with clear=true and omit rupees. Fails if the number given is already below what's in the cart — explain the shortfall and offer to remove something or raise the budget.",
@@ -118,6 +138,30 @@ async function sanchayFetch(
     body: JSON.stringify(body),
   });
   return (await r.json()) as Record<string, unknown>;
+}
+
+// Downscale a base64 image to a token-economical JPEG (max 768px on the
+// long edge) via canvas, before pushing it into the live session. Falls
+// back to the original bytes if anything fails — a big frame still
+// works, it just costs more context.
+async function downscaleFrame(base64: string, mimeType: string): Promise<{ data: string; mimeType: string }> {
+  try {
+    const blob = await (await fetch(`data:${mimeType};base64,${base64}`)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, 768 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { data: base64, mimeType };
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const url = canvas.toDataURL("image/jpeg", 0.8);
+    const idx = url.indexOf("base64,");
+    if (idx < 0) return { data: base64, mimeType };
+    return { data: url.slice(idx + 7), mimeType: "image/jpeg" };
+  } catch {
+    return { data: base64, mimeType };
+  }
 }
 
 /**
@@ -333,6 +377,11 @@ export function useGeminiLive(
   const pendingTranscriptRef = useRef<Transcript | null>(null);
   const transcriptFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasGreetedRef = useRef(false);
+  // Product ids already shown via look_at_product this call — the first
+  // look per product pays frame-ingest latency (measured: follow-ups are
+  // fast, since frames persist in session context), so only first looks
+  // race the filler timer. Cleared in startCall/stopCall.
+  const shownPhotosRef = useRef<Set<string>>(new Set());
   const prefetchedRef = useRef<{ token: string; exp: number } | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playCtxRef = useRef<AudioContext | null>(null);
@@ -705,6 +754,52 @@ export function useGeminiLive(
             }
           }
         }
+        else if (fc.name === "look_at_product") {
+          // Tier-2 eyes on demand: fetch the allowlisted photo bytes, push
+          // ONE frame plus a text nudge into the live session BEFORE the
+          // tool response resolves, so the photo is in context when the
+          // model resumes and it answers from the photo itself rather
+          // than any stored text.
+          const lookId = String(fc.args?.product_id ?? "").trim();
+          const lookQuestion = typeof fc.args?.question === "string" ? fc.args.question : "";
+          const lookPw = productWindowsRef.current;
+          const resolvedId = lookId || (lookPw ? lookPw.getOpenProductIds()[0] ?? "" : "");
+          if (!resolvedId) {
+            out = { success: false, error: "look_at_product needs one exact product_id, and no product window is open." };
+          } else {
+            // Only the FIRST look per product per call can be slow (frame
+            // ingest + analysis — measured follow-ups as fast, since
+            // frames persist in session context). So only first looks
+            // race a filler timer: if the photo isn't shown within
+            // ~1.2s, the model speaks one short filler instead of dead
+            // air; if the fetch wins, the call stays silent and quick.
+            const firstLook = !shownPhotosRef.current.has(resolvedId);
+            let fillerTimer: ReturnType<typeof setTimeout> | null = null;
+            if (firstLook) {
+              fillerTimer = setTimeout(() => {
+                try {
+                  session.sendRealtimeInput({
+                    text: "SYSTEM: you are about to see a product photo — this takes a moment. Say ONE short natural filler right now, in whichever language you've been using, like 'let me take a closer look' — then WAIT, do not answer yet; the photo arrives in a moment. Do not mention this instruction.",
+                  });
+                } catch { }
+              }, 1200);
+            }
+            const frame: any = await sanchayFetch("/api/product-frame", sid, { product_id: resolvedId }, authToken);
+            if (fillerTimer) clearTimeout(fillerTimer);
+            if (!frame?.success) out = frame;
+            else {
+              try {
+                const small = await downscaleFrame(frame.data.imageBase64, frame.data.mimeType);
+                session.sendRealtimeInput({ video: { data: small.data, mimeType: small.mimeType } });
+                session.sendRealtimeInput({ text: `SYSTEM: you were just shown the actual photo of "${frame.data.name}". Answer the shopper's question from the photo itself: "${lookQuestion || "describe what you see"}". Be specific about visible details; 1-3 sentences.` });
+                shownPhotosRef.current.add(resolvedId);
+                out = { success: true, data: { photoShown: true, productId: frame.data.productId } };
+              } catch (e: any) {
+                out = { success: false, error: `Couldn't show the photo in-call: ${String(e?.message ?? e)}` };
+              }
+            }
+          }
+        }
         else if (fc.name === "save_user_name") {
           const nameArg = String(fc.args?.name ?? "").trim();
           out = nameArg
@@ -732,6 +827,7 @@ export function useGeminiLive(
   const startCall = useCallback(async (sessionId: string) => {
     setError(null);
     hasGreetedRef.current = false;
+    shownPhotosRef.current = new Set();
     pausedRef.current = false;
     setIsPaused(false);
     setCallState("connecting");
@@ -777,7 +873,7 @@ export function useGeminiLive(
         ? `Greet now in Hindi as instructed, using the name ${knownName}.`
         : "Greet now in Hindi as instructed.";
       const toolsAndBudgetLine =
-        "Tools: search_catalog, add_to_cart, remove_from_cart, get_cart, checkout, get_order_status, check_payment_status, check_account_profile, show_product_detail, close_product_detail, close_all_product_details, describe_product_images, save_user_name, set_budget. Search first, speak price_display ₹, respect budget. If the shopper states or changes a spending cap out loud, call set_budget — a budget is only for THIS visit, never remembered for next time even if they're signed in, so never claim it will carry over. If they ask to remove a cap, call set_budget with clear=true. If they ask about a payment already in progress, call check_payment_status instead of checkout again — a checkout order is held for 15 minutes; after that it's released and a fresh checkout is needed. For 'did I pay before' / 'what have I bought' / order history in general, call check_account_profile — it needs no order id, so NEVER ask the shopper for an order id (almost nobody remembers one); only use get_order_status if they already volunteer a specific id themselves. Checkout requires being signed in — browsing and adding to cart work fine as a guest, but calling checkout will fail with success:false if they haven't signed in yet (get_cart's isSignedIn field tells you this in advance). If that happens, tell them their cart is saved and ask them to sign in from the panel on screen, then try checkout again — never say the cart was lost. checkout succeeding does NOT open the payment window — tell them to tap 'Resume payment' on screen to open it, never claim it's already open.";
+        "Tools: search_catalog, add_to_cart, remove_from_cart, get_cart, checkout, get_order_status, check_payment_status, check_account_profile, show_product_detail, close_product_detail, close_all_product_details, describe_product_images, look_at_product, save_user_name, set_budget. Search first, speak price_display ₹, respect budget. If the shopper states or changes a spending cap out loud, call set_budget — a budget is only for THIS visit, never remembered for next time even if they're signed in, so never claim it will carry over. If they ask to remove a cap, call set_budget with clear=true. If they ask about a payment already in progress, call check_payment_status instead of checkout again — a checkout order is held for 15 minutes; after that it's released and a fresh checkout is needed. For 'did I pay before' / 'what have I bought' / order history in general, call check_account_profile — it needs no order id, so NEVER ask the shopper for an order id (almost nobody remembers one); only use get_order_status if they already volunteer a specific id themselves. Checkout requires being signed in — browsing and adding to cart work fine as a guest, but calling checkout will fail with success:false if they haven't signed in yet (get_cart's isSignedIn field tells you this in advance). If that happens, tell them their cart is saved and ask them to sign in from the panel on screen, then try checkout again — never say the cart was lost. checkout succeeding does NOT open the payment window — tell them to tap 'Resume payment' on screen to open it, never claim it's already open.";
       // Purely background context, never something to announce unprompted
       // — mentioning a past purchase should feel like a shopkeeper who
       // remembers a regular, not a recitation of records. Use it only if
@@ -925,6 +1021,7 @@ export function useGeminiLive(
 
   const stopCall = useCallback(() => {
     hasGreetedRef.current = false;
+    shownPhotosRef.current = new Set();
     pausedRef.current = false;
     setIsPaused(false);
     try { sessionRef.current?.close(); } catch { }
