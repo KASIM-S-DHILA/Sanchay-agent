@@ -4,24 +4,6 @@ import { seedCatalog, replaceCatalog } from "../catalog/seed";
 import { embedProducts } from "../catalog/embed";
 import { generateVisualDescriptions } from "../catalog/visualDescribe";
 
-// TEMPORARY, one-time-use route — accepts Meta's Llama 3.2 Community
-// License + Acceptable Use Policy on this Cloudflare account, required
-// once before @cf/meta/llama-3.2-11b-vision-instruct will run (see
-// catalog/visualDescribe.ts). Same account-level gate as this pattern
-// covers: submit the literal string "agree" to the model once. Delete
-// this route after it's been called successfully — it has no ongoing
-// purpose once the account has accepted.
-export async function handleAcceptVisionLicense(request: Request, env: Env): Promise<Response> {
-  return withApiLogging(
-    env,
-    { sessionId: null, endpoint: "/admin/accept-vision-license", method: "POST", params: null },
-    async (): Promise<ApiResult> => {
-      const result: any = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct" as any, { prompt: "agree" } as any);
-      return json({ success: true, data: { result } });
-    },
-  );
-}
-
 export async function handleSeedCatalog(request: Request, env: Env): Promise<Response> {
   return withApiLogging(
     env,

@@ -12,7 +12,7 @@ import { handleCheckout, handleOrderStatus } from "./api/checkout";
 import { handleAudit } from "./api/audit";
 import { handleGetTranscript } from "./api/transcript";
 import { handleRazorpayWebhook } from "./api/webhook";
-import { handleSeedCatalog, handleReplaceCatalog, handleAcceptVisionLicense, handleRunVisualDescriptions } from "./api/admin";
+import { handleSeedCatalog, handleReplaceCatalog, handleRunVisualDescriptions } from "./api/admin";
 import { generateVisualDescriptions } from "./catalog/visualDescribe";
 import { handleSaveName } from "./api/user";
 import { handleAuthOtpSend, handleAuthOtpVerify } from "./api/auth";
@@ -151,8 +151,6 @@ export default {
         response = checkAdminToken(env, request) ?? (await handleSeedCatalog(request, env));
       } else if (url.pathname === "/admin/replace-catalog" && request.method === "POST") {
         response = checkAdminToken(env, request) ?? (await handleReplaceCatalog(request, env));
-      } else if (url.pathname === "/admin/accept-vision-license" && request.method === "POST") {
-        response = checkAdminToken(env, request) ?? (await handleAcceptVisionLicense(request, env));
       } else if (url.pathname === "/admin/run-visual-descriptions" && request.method === "POST") {
         response = checkAdminToken(env, request) ?? (await handleRunVisualDescriptions(request, env));
       } else {
