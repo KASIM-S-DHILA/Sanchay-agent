@@ -1941,3 +1941,44 @@ input {
   opacity: 0.6;
   cursor: default;
 }
+
+.about-page {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+  line-height: 1.6;
+}
+
+.about-page h2 {
+  margin: 0 0 0.75rem;
+}
+
+.about-page h3 {
+  margin: 1.5rem 0 0.5rem;
+}
+
+.about-page ul {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.site-footer {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.site-footer-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  padding: 0;
+}
+
+.site-footer-link:hover {
+  color: var(--ink-2);
+}

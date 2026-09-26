@@ -13,6 +13,7 @@ import { useAuth } from "./hooks/useAuth";
 import { useGeminiLive } from "./hooks/useGeminiLive";
 import { useProductWindows } from "./hooks/useProductWindows";
 import { ProductDetailWindows } from "./components/ProductDetailWindows";
+import { AboutPage } from "./components/AboutPage";
 import { RAZORPAY_KEY_ID, rupees } from "./config";
 
 interface CartData {
@@ -76,7 +77,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem(SESSION_STORAGE_KEY));
   const [cart, setCart] = useState<CartData | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [view, setView] = useState<"shop" | "bill">("shop");
+  const [view, setView] = useState<"shop" | "bill" | "about">("shop");
 
   const [shelfQuery, setShelfQuery] = useState("");
   const [shelfSource, setShelfSource] = useState<ShelfSource>("default");
@@ -823,6 +824,9 @@ export default function App() {
         </div>
       </header>
 
+      {view === "about" ? (
+        <AboutPage onBack={() => setView("shop")} />
+      ) : (
       <main className="workspace" data-view={view}>
         <div className="work">
           <VoiceDock
@@ -907,6 +911,13 @@ export default function App() {
           {sessionId && <ActivityLog events={events} />}
         </aside>
       </main>
+      )}
+
+      <footer className="site-footer">
+        <button type="button" className="site-footer-link" onClick={() => setView("about")}>
+          About Sanchay
+        </button>
+      </footer>
 
       <ProductDetailWindows
         windows={productWindows.windows}
